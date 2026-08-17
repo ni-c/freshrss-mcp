@@ -1,0 +1,152 @@
+import { z } from 'zod';
+
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+
+import { expectOk, type FreshRssApi } from '../api.js';
+import {
+  confirmationPrompt,
+  setResourceKey,
+  type ConfirmationStore,
+} from '../confirm.js';
+import { errorResult, jsonResult, run, textResult } from '../result.js';
+import {
+  labelFromStreamId,
+  unreadCountIndex,
+  UNTRUSTED_CONTENT_NOTE,
+  type RawTag,
+  type RawUnreadCount,
+} from '../shape.js';
+import { assertTagName, SPECIAL_STREAMS } from '../streams.js';
+
+export function registerTagReadTools(
+  server: McpServer,
+  api: FreshRssApi
+): void {
+  server.registerTool(
+    'list_categories',
+    {
+      title: 'List categories and labels',
+      description:
+        'Lists the categories (folders that hold feeds) and the user labels (tags that ' +
+        'are attached to individual articles), each with its unread count. Both are ' +
+        'addressed by name in the other tools.',
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    async () =>
+      run(async () => {
+        const [tagList, counts] = await Promise.all([
+          api.getJson('/tag/list') as Promise<{ tags?: RawTag[] }>,
+          api.getJson('/unread-count') as Promise<{
+            unreadcounts?: RawUnreadCount[];
+          }>,
+        ]);
+        const unread = unreadCountIndex(counts.unreadcounts ?? []);
+
+        const categories: { name: string; unreadCount: number | undefined }[] =
+          [];
+        const labels: { name: string; unreadCount: number | undefined }[] = [];
+        for (const tag of tagList.tags ?? []) {
+          const name = labelFromStreamId(tag.id);
+          if (name === null) continue;
+          const entry = {
+            name,
+            unreadCount: tag.unread_count ?? unread.get(tag.id ?? ''),
+          };
+          if (tag.type === 'tag') labels.push(entry);
+          else categories.push(entry);
+        }
+
+        return jsonResult({
+          categories,
+          labels,
+          specialStreams: Object.keys(SPECIAL_STREAMS),
+          notes: [UNTRUSTED_CONTENT_NOTE],
+        });
+      })
+  );
+}
+
+export function registerTagWriteTools(
+  server: McpServer,
+  api: FreshRssApi,
+  confirmations: ConfirmationStore
+): void {
+  server.registerTool(
+    'rename_category_or_label',
+    {
+      title: 'Rename a category or label',
+      description:
+        'Renames a category (folder) or a user label. FreshRSS resolves the name against ' +
+        'its categories first and falls back to labels, so one tool covers both. Feeds and ' +
+        'articles keep their assignment.',
+      inputSchema: {
+        name: z
+          .string()
+          .describe('Current name, exactly as in list_categories'),
+        new_name: z.string().describe('New name'),
+      },
+    },
+    async ({ name, new_name }) =>
+      run(async () => {
+        const from = assertTagName(name, 'category or label');
+        const to = assertTagName(new_name, 'new category or label');
+        if (from === to) {
+          return errorResult('The new name is identical to the current one.');
+        }
+        const form = new URLSearchParams({
+          s: `user/-/label/${from}`,
+          dest: `user/-/label/${to}`,
+        });
+        expectOk(await api.postForm('/rename-tag', form), 'the rename');
+        return textResult('Renamed.');
+      })
+  );
+
+  server.registerTool(
+    'delete_category_or_label',
+    {
+      title: 'Delete a category or label',
+      description:
+        'Deletes a category (its feeds move to the default category, no articles are lost) ' +
+        'or a user label (it is detached from every article). FreshRSS matches categories ' +
+        'first, so a category and a label of the same name cannot be told apart here. ' +
+        'Two-step: the first call returns a confirmation token, the second call with that ' +
+        'token performs the deletion.',
+      inputSchema: {
+        name: z.string().describe('Name, exactly as in list_categories'),
+        confirm_token: z
+          .string()
+          .optional()
+          .describe('Token from the first call of this tool'),
+      },
+      annotations: { destructiveHint: true },
+    },
+    async ({ name, confirm_token }) =>
+      run(async () => {
+        const target = assertTagName(name, 'category or label');
+        const resource = setResourceKey('delete_category_or_label', [target]);
+
+        if (!confirmations.consume(resource, confirm_token)) {
+          if (confirm_token !== undefined) {
+            return errorResult(
+              'The confirmation token is invalid, expired or was issued for a different ' +
+                'name. Call delete_category_or_label without a token to get a new one.'
+            );
+          }
+          return textResult(
+            confirmationPrompt(
+              'delete the given category or label — if it is a category its feeds move ' +
+                'to the default category, if it is a label it is removed from every article',
+              confirmations.issue(resource),
+              confirmations.ttlMinutes
+            )
+          );
+        }
+
+        const form = new URLSearchParams({ s: `user/-/label/${target}` });
+        expectOk(await api.postForm('/disable-tag', form), 'the deletion');
+        return textResult('Deleted.');
+      })
+  );
+}

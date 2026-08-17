@@ -1,0 +1,348 @@
+import { z } from 'zod';
+
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+
+import { expectOk, SLOW_REQUEST_TIMEOUT_MS, type FreshRssApi } from '../api.js';
+import {
+  confirmationPrompt,
+  setResourceKey,
+  type ConfirmationStore,
+} from '../confirm.js';
+import {
+  errorResult,
+  jsonResult,
+  run,
+  textResult,
+  ToolInputError,
+} from '../result.js';
+import {
+  feedIdFromStreamId,
+  labelFromStreamId,
+  shapeSubscription,
+  unreadCountIndex,
+  UNTRUSTED_CONTENT_NOTE,
+  type RawSubscription,
+  type RawUnreadCount,
+} from '../shape.js';
+import { assertFeedId, assertTagName } from '../streams.js';
+
+interface SubscriptionListResponse {
+  subscriptions?: RawSubscription[];
+}
+
+interface UnreadCountResponse {
+  max?: number;
+  unreadcounts?: RawUnreadCount[];
+}
+
+async function loadUnreadCounts(
+  api: FreshRssApi
+): Promise<UnreadCountResponse> {
+  return (await api.getJson('/unread-count')) as UnreadCountResponse;
+}
+
+export function registerFeedReadTools(
+  server: McpServer,
+  api: FreshRssApi
+): void {
+  server.registerTool(
+    'get_user_info',
+    {
+      title: 'Get user info',
+      description:
+        'Returns the FreshRSS account the server is authenticated as. Useful as a ' +
+        'connection and credential check before anything else.',
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    async () =>
+      run(async () => {
+        const data = (await api.getJson('/user-info')) as {
+          userId?: string;
+          userName?: string;
+          userEmail?: string;
+        };
+        return jsonResult({
+          userId: data.userId,
+          userName: data.userName,
+          userEmail: data.userEmail,
+        });
+      })
+  );
+
+  server.registerTool(
+    'list_feeds',
+    {
+      title: 'List feeds',
+      description:
+        'Lists every subscribed feed with its category and unread count. The numeric ' +
+        'feedId is what all other tools take as feed_id. Start here to find out what is ' +
+        'subscribed before listing articles.',
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    async () =>
+      run(async () => {
+        const [list, counts] = await Promise.all([
+          api.getJson(
+            '/subscription/list'
+          ) as Promise<SubscriptionListResponse>,
+          loadUnreadCounts(api),
+        ]);
+        const unread = unreadCountIndex(counts.unreadcounts ?? []);
+        const feeds = (list.subscriptions ?? []).map((feed) =>
+          shapeSubscription(feed, unread)
+        );
+        return jsonResult({
+          feeds,
+          feedCount: feeds.length,
+          totalUnread: counts.max,
+          notes: [UNTRUSTED_CONTENT_NOTE],
+        });
+      })
+  );
+
+  server.registerTool(
+    'get_unread_counts',
+    {
+      title: 'Get unread counts',
+      description:
+        'Returns how many unread articles are waiting, in total and per feed and ' +
+        'category, sorted by count. Only entries with unread articles are listed.',
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    async () =>
+      run(async () => {
+        const [list, counts] = await Promise.all([
+          api.getJson(
+            '/subscription/list'
+          ) as Promise<SubscriptionListResponse>,
+          loadUnreadCounts(api),
+        ]);
+        const titles = new Map<number, string>();
+        for (const feed of list.subscriptions ?? []) {
+          const id = feedIdFromStreamId(feed.id);
+          if (id !== null && feed.title !== undefined)
+            titles.set(id, feed.title);
+        }
+
+        const feeds: {
+          feedId: number;
+          title: string | undefined;
+          unread: number;
+        }[] = [];
+        const categories: { name: string; unread: number }[] = [];
+        for (const entry of counts.unreadcounts ?? []) {
+          if (entry.id === undefined || !entry.count) continue;
+          const feedId = feedIdFromStreamId(entry.id);
+          if (feedId !== null) {
+            feeds.push({
+              feedId,
+              title: titles.get(feedId),
+              unread: entry.count,
+            });
+            continue;
+          }
+          const label = labelFromStreamId(entry.id);
+          if (label !== null)
+            categories.push({ name: label, unread: entry.count });
+        }
+        feeds.sort((a, b) => b.unread - a.unread);
+        categories.sort((a, b) => b.unread - a.unread);
+
+        return jsonResult({
+          totalUnread: counts.max ?? 0,
+          feeds,
+          // FreshRSS reports categories and user labels under the same key shape,
+          // so this list holds both — see list_categories for the distinction.
+          categoriesAndLabels: categories,
+          notes: [UNTRUSTED_CONTENT_NOTE],
+        });
+      })
+  );
+}
+
+export function registerFeedWriteTools(
+  server: McpServer,
+  api: FreshRssApi,
+  confirmations: ConfirmationStore
+): void {
+  server.registerTool(
+    'subscribe_feed',
+    {
+      title: 'Subscribe to a feed',
+      description:
+        'Subscribes to a feed. The URL may point at the feed itself or at a website — ' +
+        'FreshRSS discovers the feed and then downloads it, so this call can take a while. ' +
+        'A category that does not exist yet is created.',
+      inputSchema: {
+        url: z.string().describe('Feed URL or website URL (http/https)'),
+        title: z
+          .string()
+          .optional()
+          .describe("Title to use instead of the feed's own title"),
+        category: z
+          .string()
+          .optional()
+          .describe('Category to file the feed under; created if unknown'),
+      },
+    },
+    async ({ url, title, category }) =>
+      run(async () => {
+        const feedUrl = assertHttpUrl(url);
+        const result = (await api.getJson(
+          '/subscription/quickadd',
+          { quickadd: feedUrl },
+          SLOW_REQUEST_TIMEOUT_MS
+        )) as {
+          numResults?: number;
+          streamId?: string;
+          error?: string;
+        };
+        // quickadd reports failures with HTTP 200 and numResults 0, so the status
+        // code says nothing about whether the subscription happened.
+        if (!result.numResults || result.streamId === undefined) {
+          return errorResult(
+            `FreshRSS could not subscribe to that URL: ${result.error ?? 'no feed found'}`
+          );
+        }
+        const feedId = feedIdFromStreamId(result.streamId);
+        if (feedId === null) {
+          return errorResult(
+            `FreshRSS returned an unexpected stream id for the new feed: ${result.streamId}`
+          );
+        }
+
+        if (title !== undefined || category !== undefined) {
+          await editSubscription(api, feedId, title, category);
+        }
+        return jsonResult({
+          feedId,
+          subscribed: true,
+          note: 'Use list_feeds to see the feed with its resolved title and category.',
+        });
+      })
+  );
+
+  server.registerTool(
+    'update_feed',
+    {
+      title: 'Update a feed',
+      description:
+        'Renames a feed and/or moves it to another category. A category that does not ' +
+        'exist yet is created. Fields that are not given stay unchanged.',
+      inputSchema: {
+        feed_id: z
+          .number()
+          .int()
+          .positive()
+          .describe('Numeric feedId from list_feeds'),
+        title: z.string().optional().describe('New title'),
+        category: z
+          .string()
+          .optional()
+          .describe('Category to move the feed to'),
+      },
+    },
+    async ({ feed_id, title, category }) =>
+      run(async () => {
+        if (title === undefined && category === undefined) {
+          return errorResult(
+            'Nothing to change: set at least one of title or category.'
+          );
+        }
+        await editSubscription(api, assertFeedId(feed_id), title, category);
+        return textResult(`Feed ${feed_id} updated.`);
+      })
+  );
+
+  server.registerTool(
+    'unsubscribe_feed',
+    {
+      title: 'Unsubscribe from a feed',
+      description:
+        'Deletes a feed together with all of its stored articles, read state and stars. ' +
+        'Two-step: the first call returns a confirmation token, the second call with that ' +
+        'token performs the deletion. This cannot be undone — re-subscribing starts from ' +
+        'whatever the feed currently offers.',
+      inputSchema: {
+        feed_id: z
+          .number()
+          .int()
+          .positive()
+          .describe('Numeric feedId from list_feeds'),
+        confirm_token: z
+          .string()
+          .optional()
+          .describe('Token from the first call of this tool'),
+      },
+      annotations: { destructiveHint: true },
+    },
+    async ({ feed_id, confirm_token }) =>
+      run(async () => {
+        const feedId = assertFeedId(feed_id);
+        const resource = setResourceKey('unsubscribe_feed', [String(feedId)]);
+
+        if (!confirmations.consume(resource, confirm_token)) {
+          if (confirm_token !== undefined) {
+            return errorResult(
+              'The confirmation token is invalid, expired or was issued for a different ' +
+                'feed. Call unsubscribe_feed without a token to get a new one.'
+            );
+          }
+          // Deliberately only the id in this text — never the feed title, which
+          // comes from a third-party website.
+          return textResult(
+            confirmationPrompt(
+              `delete feed ${feedId} and all of its stored articles`,
+              confirmations.issue(resource),
+              confirmations.ttlMinutes
+            )
+          );
+        }
+
+        const form = new URLSearchParams({
+          ac: 'unsubscribe',
+          s: `feed/${feedId}`,
+        });
+        expectOk(
+          await api.postForm('/subscription/edit', form),
+          `the deletion of feed ${feedId}`
+        );
+        return textResult(`Feed ${feedId} deleted.`);
+      })
+  );
+}
+
+async function editSubscription(
+  api: FreshRssApi,
+  feedId: number,
+  title: string | undefined,
+  category: string | undefined
+): Promise<void> {
+  const form = new URLSearchParams({ ac: 'edit', s: `feed/${feedId}` });
+  if (title !== undefined) form.set('t', title);
+  if (category !== undefined) {
+    form.set('a', `user/-/label/${assertTagName(category, 'category')}`);
+  }
+  expectOk(
+    await api.postForm('/subscription/edit', form),
+    `the update of feed ${feedId}`
+  );
+}
+
+function assertHttpUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url.trim());
+  } catch {
+    throw new ToolInputError(`invalid url: ${url}`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new ToolInputError(
+      `invalid url: only http:// and https:// feeds can be subscribed (got ${parsed.protocol})`
+    );
+  }
+  return parsed.toString();
+}
