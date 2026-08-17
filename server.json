@@ -1,0 +1,95 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.ni-c/freshrss-mcp",
+  "title": "FreshRSS",
+  "description": "MCP server for FreshRSS, the self-hosted RSS feed aggregator",
+  "websiteUrl": "https://freshrss-mcp.ni-c.de",
+  "repository": {
+    "url": "https://github.com/ni-c/freshrss-mcp",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@ni-c/freshrss-mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "FRESHRSS_URL",
+          "description": "Root URL of the FreshRSS instance, e.g. https://rss.example.com",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "FRESHRSS_USER",
+          "description": "FreshRSS user name",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "FRESHRSS_API_PASSWORD",
+          "description": "API password from Settings -> Profile -> API management, not the web login password",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "FRESHRSS_READ_ONLY",
+          "description": "Set to true to register only the read tools",
+          "isRequired": false,
+          "format": "boolean"
+        },
+        {
+          "name": "FRESHRSS_INSECURE_TLS",
+          "description": "Set to true to accept a self-signed certificate for this connection only",
+          "isRequired": false,
+          "format": "boolean"
+        }
+      ]
+    },
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/ni-c/freshrss-mcp:0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "FRESHRSS_URL",
+          "description": "Root URL of the FreshRSS instance, e.g. https://rss.example.com",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "FRESHRSS_USER",
+          "description": "FreshRSS user name",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "FRESHRSS_API_PASSWORD",
+          "description": "API password from Settings -> Profile -> API management, not the web login password",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "FRESHRSS_READ_ONLY",
+          "description": "Set to true to register only the read tools",
+          "isRequired": false,
+          "format": "boolean"
+        },
+        {
+          "name": "FRESHRSS_INSECURE_TLS",
+          "description": "Set to true to accept a self-signed certificate for this connection only",
+          "isRequired": false,
+          "format": "boolean"
+        }
+      ]
+    }
+  ]
+}
