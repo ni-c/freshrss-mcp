@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-17
+
+### Changed
+
+- First release published by CI, so this is the first version carrying npm
+  provenance attestations, a GitHub release generated from this file, and an
+  entry in the MCP Registry. 0.1.0 was published by hand to claim the package
+  name and is functionally identical; prefer this version if you verify
+  provenance.
+
 ## [0.1.0] - 2026-08-17
 
 ### Added
