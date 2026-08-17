@@ -570,7 +570,13 @@ describe('error handling', () => {
     expect(textOf(result)).not.toMatch(/Bad Gateway/);
   });
 
-  it('explains a 400 as an unknown stream instead of leaving it bare', async () => {
+  // The hint used to say a 400 means the category or label does not exist. Live
+  // testing against FreshRSS 1.29.1 disproved that: an unknown category, label or
+  // feed id returns HTTP 200 with an empty list, and only a malformed stream id
+  // produces 400. Sending a model looking for a typo was the wrong advice, so the
+  // hint now says what a 400 actually is — and the empty-list case is covered by
+  // the `hint` field asserted in hardening.test.ts.
+  it('explains a 400 as a request-shape problem, not a misspelled name', async () => {
     stubFreshRss({
       '/stream/contents/user/-/label/Nope': () =>
         new Response('Bad Request!', { status: 400 }),
@@ -582,6 +588,7 @@ describe('error handling', () => {
       arguments: { category: 'Nope' },
     })) as CallToolResult;
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toMatch(/list_feeds or list_categories/);
+    expect(textOf(result)).toMatch(/malformed stream id/);
+    expect(textOf(result)).toMatch(/returns an empty list instead/);
   });
 });

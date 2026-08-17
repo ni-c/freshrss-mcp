@@ -24,6 +24,7 @@ import {
 } from '../src/shape.js';
 import { createServer } from '../src/server.js';
 import { assertTagName, itemIdToDecimal } from '../src/streams.js';
+import { emptyResultHint } from '../src/tools/articles.js';
 import { rawEntry, stubFreshRss, testConfig, type Routes } from './helpers.js';
 
 async function connect(): Promise<Client> {
@@ -495,5 +496,44 @@ describe('zod strip invariant', () => {
     expect(
       (Object.prototype as unknown as { polluted?: unknown }).polluted
     ).toBeUndefined();
+  });
+});
+
+describe('empty-result hint', () => {
+  // Verified live against FreshRSS 1.29.1: an unknown category, label or feed id
+  // returns HTTP 200 with an empty items array, not an error. Only a malformed
+  // built-in stream id produces 400. A mistyped name is therefore
+  // indistinguishable from "nothing unread" unless it is said out loud.
+  it('explains an empty listing for a category or label selector', () => {
+    expect(emptyResultHint(0, { category: 'Nope' })).toMatch(/list_categories/);
+    expect(emptyResultHint(0, { label: 'Nope' })).toMatch(
+      /rather than an error/
+    );
+  });
+
+  it('explains an empty listing for a feed id selector', () => {
+    expect(emptyResultHint(0, { feed_id: 999 })).toMatch(/list_feeds/);
+  });
+
+  it('stays quiet when articles were returned', () => {
+    expect(emptyResultHint(3, { category: 'News' })).toBeUndefined();
+  });
+
+  it('stays quiet for a built-in stream, which does error on a bad name', () => {
+    expect(emptyResultHint(0, { stream: 'starred' })).toBeUndefined();
+    expect(emptyResultHint(0, {})).toBeUndefined();
+  });
+
+  it('reaches the tool result', async () => {
+    const result = await call(
+      {
+        '/stream/contents/user/-/label/DoesNotExist': JSON.stringify({
+          items: [],
+        }),
+      },
+      'list_articles',
+      { category: 'DoesNotExist' }
+    );
+    expect(String(dataOf(result).hint)).toMatch(/list_categories/);
   });
 });

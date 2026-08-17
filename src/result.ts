@@ -70,9 +70,11 @@ function hintFor(status: number): string {
   switch (status) {
     case 400:
       return (
-        '\nHint: FreshRSS answers "Bad Request" when a stream, feed, category or ' +
-        'label does not exist — the name is matched literally, including case. ' +
-        'Call list_feeds or list_categories to get the exact names.'
+        '\nHint: FreshRSS answers "Bad Request" for a malformed stream id or an ' +
+        'unsupported parameter value. Note that a category, label or feed id that ' +
+        'merely does not exist does NOT produce this error — verified against 1.29.1, ' +
+        'it returns an empty list instead — so this is a request shape problem, not a ' +
+        'misspelled name.'
       );
     case 401:
       return (

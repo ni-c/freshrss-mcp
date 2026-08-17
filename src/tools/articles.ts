@@ -205,6 +205,7 @@ export function registerArticleReadTools(
           maxContentChars: args.max_content_chars ?? DEFAULT_MAX_CONTENT_CHARS,
           totalContentBudget: TOTAL_CONTENT_BUDGET,
         });
+        const emptyHint = emptyResultHint(articles.length, selectorOf(args));
         return jsonResult({
           articles,
           continuation: data.continuation,
@@ -214,6 +215,7 @@ export function registerArticleReadTools(
                   'Call list_articles again with this continuation value for the next page.',
               }
             : {}),
+          ...(emptyHint === undefined ? {} : { hint: emptyHint }),
           ...(notes.length > 0 ? { notes } : {}),
         });
       })
@@ -292,10 +294,12 @@ export function registerArticleReadTools(
         const articleIds = (data.itemRefs ?? [])
           .map((ref) => ref.id)
           .filter((id): id is string => id !== undefined);
+        const emptyHint = emptyResultHint(articleIds.length, selectorOf(args));
         return jsonResult({
           articleIds,
           count: articleIds.length,
           continuation: data.continuation,
+          ...(emptyHint === undefined ? {} : { hint: emptyHint }),
         });
       })
   );
@@ -445,6 +449,40 @@ export function registerArticleWriteTools(
         return textResult(`Marked ${description} as read.`);
       })
   );
+}
+
+/**
+ * Explains an empty listing when the selector could simply be misspelled.
+ *
+ * Verified against FreshRSS 1.29.1: a category, label or feed id that does not
+ * exist returns HTTP 200 with an empty `items` array, *not* an error — only a
+ * malformed built-in stream id produces 400. So the most likely mistake, a
+ * mistyped name, is indistinguishable from "nothing unread" unless it is said
+ * out loud. Without this a model reports "you have no unread articles in News"
+ * when the category is actually called "news".
+ */
+export function emptyResultHint(
+  count: number,
+  selector: StreamSelector
+): string | undefined {
+  if (count > 0) return undefined;
+  if (selector.category !== undefined || selector.label !== undefined) {
+    return (
+      'No articles matched. Note that FreshRSS returns an empty list rather than an ' +
+      'error for a category or label that does not exist, and names are matched ' +
+      'literally including case — confirm the name with list_categories. Otherwise ' +
+      'the filter (default: unread) or the date range may simply exclude everything.'
+    );
+  }
+  if (selector.feed_id !== undefined) {
+    return (
+      'No articles matched. Note that FreshRSS returns an empty list rather than an ' +
+      'error for a feed id that does not exist — confirm the id with list_feeds. ' +
+      'Otherwise the filter (default: unread) or the date range may simply exclude ' +
+      'everything.'
+    );
+  }
+  return undefined;
 }
 
 /**
