@@ -27,3 +27,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `delete_category_or_label` and `import_opml`.
 - Plain-text conversion of article HTML with per-article and per-response size
   budgets.
+- Credentials embedded in feed URLs (`https://user:password@host/feed`, how
+  FreshRSS stores HTTP-auth feeds) are redacted in `list_feeds` and
+  `export_opml`.
+- `subscribe_feed` refuses loopback and link-local targets: FreshRSS fetches the
+  URL server-side, so the tool would otherwise be an SSRF primitive reachable
+  from text inside an article. Private LAN addresses stay allowed.
+- `import_opml` refuses documents with a `<!DOCTYPE>` or `<!ENTITY>`
+  declaration, which is what carries entity-expansion and external-entity
+  attacks into the FreshRSS server's XML parser.
+- Multi-architecture container image on `ghcr.io/ni-c/freshrss-mcp` with an SBOM
+  and build provenance. npm is removed from the runtime image — it is unused
+  there, and its vendored dependencies were the image's only HIGH/CRITICAL CVEs.
+- CI: lint, build and tests on Node 22 and 24, `npm audit`, CodeQL, and a Trivy
+  scan of the image on amd64 and arm64. Releases publish to npm via Trusted
+  Publishing with provenance and register with the MCP Registry.

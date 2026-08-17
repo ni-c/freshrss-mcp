@@ -1,5 +1,13 @@
 # freshrss-mcp
 
+[![CI](https://github.com/ni-c/freshrss-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ni-c/freshrss-mcp/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@ni-c/freshrss-mcp)](https://www.npmjs.com/package/@ni-c/freshrss-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/@ni-c/freshrss-mcp)](https://www.npmjs.com/package/@ni-c/freshrss-mcp)
+[![node](https://img.shields.io/node/v/@ni-c/freshrss-mcp)](https://nodejs.org)
+[![license](https://img.shields.io/github/license/ni-c/freshrss-mcp)](LICENSE)
+[![container](https://img.shields.io/badge/ghcr.io-ni--c%2Ffreshrss--mcp-blue?logo=docker&logoColor=white)](https://github.com/ni-c/freshrss-mcp/pkgs/container/freshrss-mcp)
+[![docs](https://img.shields.io/badge/docs-freshrss--mcp.ni--c.de-blue)](https://freshrss-mcp.ni-c.de)
+
 A [Model Context Protocol](https://modelcontextprotocol.io) server for
 [FreshRSS](https://freshrss.org), the self-hosted RSS and Atom feed aggregator.
 
@@ -118,8 +126,40 @@ has no query parameter; narrow the result with `feed_id`/`category` and
   written to disk. Requests never follow redirects, which would resend the
   authorization header to another host, and relaxed TLS validation is scoped to
   this connection instead of the whole process.
+- **Feed URLs are redacted.** FreshRSS stores HTTP-auth feeds as
+  `https://user:password@host/feed`. The userinfo part is stripped before a feed
+  URL reaches a tool result or the OPML export, so `list_feeds` cannot print the
+  password of a paid or private feed into the transcript.
+- **`subscribe_feed` refuses internal targets.** FreshRSS fetches the URL
+  server-side, which makes the tool an SSRF primitive reachable from text inside
+  an article. Loopback and link-local addresses — including cloud metadata
+  endpoints — are rejected. Private LAN addresses stay allowed, because
+  self-hosted setups legitimately subscribe to feeds on their own network.
+- **`import_opml` refuses a `<!DOCTYPE>`.** No XML is parsed in this process, but
+  the document is handed to FreshRSS, where a document type declaration is the
+  carrier for entity-expansion and external-entity attacks. OPML never needs one.
 - `FRESHRSS_READ_ONLY=true` does not register the write tools at all rather than
   refusing them at call time.
+
+Which tools are gated by a confirmation token: `mark_all_as_read`,
+`unsubscribe_feed`, `delete_category_or_label` and `import_opml`. `mark_articles`
+is deliberately not gated — the caller names each of at most 100 articles
+explicitly and every field can be set back — but it is declared destructive, so a
+client may still prompt for it.
+
+## Container
+
+```sh
+docker run --rm -i \
+  -e FRESHRSS_URL=https://rss.example.com \
+  -e FRESHRSS_USER=alice \
+  -e FRESHRSS_API_PASSWORD=... \
+  ghcr.io/ni-c/freshrss-mcp:latest
+```
+
+The image is published for `linux/amd64` and `linux/arm64` with an SBOM and build
+provenance. It runs as the unprivileged `node` user and carries no npm, so the
+only thing in it is Node, the runtime dependencies and `dist/`.
 
 ## Development
 
@@ -128,6 +168,25 @@ npm install
 npm run lint && npm run build && npm test
 npm run test:coverage
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for a throwaway FreshRSS to develop
+against. The full documentation lives at
+[freshrss-mcp.ni-c.de](https://freshrss-mcp.ni-c.de).
+
+## Releasing
+
+1. Move the `[Unreleased]` entries in [CHANGELOG.md](CHANGELOG.md) under the new
+   version and bump `version` in `package.json`.
+2. `npm run lint && npm run build && npm run test:coverage`.
+3. Commit, then tag: `git tag -s vX.Y.Z -m vX.Y.Z && git push origin main vX.Y.Z`.
+
+The tag triggers `release.yml`, which verifies the tag matches `package.json`,
+publishes to npm via [Trusted Publishing](https://docs.npmjs.com/trusted-publishers)
+with provenance (no token involved), creates the GitHub release from the CHANGELOG
+section, and publishes the entry to the
+[MCP Registry](https://registry.modelcontextprotocol.io). If only the registry
+step fails, fix it on `main` and re-run `mcp-registry.yml` by hand — never re-run
+the tagged job, which would check out the old tree.
 
 ## License
 

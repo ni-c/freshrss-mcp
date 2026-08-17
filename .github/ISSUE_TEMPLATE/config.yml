@@ -1,0 +1,12 @@
+# Template. Placeholders: freshrss-mcp. Drop the documentation link if there is no site.
+blank_issues_enabled: true
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/ni-c/freshrss-mcp/discussions
+    about: Setup help, "how do I…", ideas that are not yet concrete features
+  - name: Security vulnerability
+    url: https://github.com/ni-c/freshrss-mcp/security/advisories/new
+    about: Please report vulnerabilities privately, never as a public issue
+  - name: Documentation
+    url: https://freshrss-mcp.ni-c.de
+    about: Guides, configuration and full tool reference
