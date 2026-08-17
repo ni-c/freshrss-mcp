@@ -14,9 +14,13 @@ import {
   unreadCountIndex,
   UNTRUSTED_CONTENT_NOTE,
   type RawTag,
-  type RawUnreadCount,
 } from '../shape.js';
 import { assertTagName, SPECIAL_STREAMS } from '../streams.js';
+// The unread-count endpoint is shared with the feed tools, which own it.
+import {
+  loadUnreadCountsOptional,
+  UNREAD_COUNTS_UNAVAILABLE,
+} from './feeds.js';
 
 export function registerTagReadTools(
   server: McpServer,
@@ -37,11 +41,9 @@ export function registerTagReadTools(
       run(async () => {
         const [tagList, counts] = await Promise.all([
           api.getJson('/tag/list') as Promise<{ tags?: RawTag[] }>,
-          api.getJson('/unread-count') as Promise<{
-            unreadcounts?: RawUnreadCount[];
-          }>,
+          loadUnreadCountsOptional(api),
         ]);
-        const unread = unreadCountIndex(counts.unreadcounts ?? []);
+        const unread = unreadCountIndex(counts?.unreadcounts ?? []);
 
         const categories: { name: string; unreadCount: number | undefined }[] =
           [];
@@ -61,7 +63,10 @@ export function registerTagReadTools(
           categories,
           labels,
           specialStreams: Object.keys(SPECIAL_STREAMS),
-          notes: [UNTRUSTED_CONTENT_NOTE],
+          notes:
+            counts === undefined
+              ? [UNTRUSTED_CONTENT_NOTE, UNREAD_COUNTS_UNAVAILABLE]
+              : [UNTRUSTED_CONTENT_NOTE],
         });
       })
   );

@@ -1,3 +1,5 @@
+import { redactUrlCredentials } from './redact.js';
+
 /**
  * Reminder attached to every response that carries article text.
  *
@@ -85,8 +87,12 @@ export function shapeSubscription(
     feedId: feedIdFromStreamId(feed.id),
     title: feed.title,
     category: category?.label ?? labelFromStreamId(category?.id) ?? undefined,
-    feedUrl: feed.url,
-    siteUrl: feed.htmlUrl !== '' ? feed.htmlUrl : undefined,
+    feedUrl:
+      feed.url === undefined ? undefined : redactUrlCredentials(feed.url),
+    siteUrl:
+      feed.htmlUrl === undefined || feed.htmlUrl === ''
+        ? undefined
+        : redactUrlCredentials(feed.htmlUrl),
     priority: feed['frss:priority'],
     unreadCount:
       feed.id !== undefined ? unreadByStreamId.get(feed.id) : undefined,
@@ -145,6 +151,11 @@ export function shapeEntry(
     .map((c) => c.slice(LABEL_PREFIX.length));
   const states = new Set(categories.filter((c) => c.startsWith(STATE_PREFIX)));
 
+  // Added before any of the early returns below: `title`, `author`, `feed.title`
+  // and `labels` are third-party content too, so an entry with an empty body — a
+  // title-only RSS item is the common case — must carry the marker just the same.
+  notes.add(UNTRUSTED_CONTENT_NOTE);
+
   const html = entry.summary?.content ?? entry.content?.content ?? '';
   const shaped: ShapedEntry = {
     id: entry.id === undefined ? '' : toDecimalId(entry.id),
@@ -176,9 +187,12 @@ export function shapeEntry(
 
   if (html === '') return shaped;
 
-  const limit = options.includeContent
-    ? Math.min(options.maxContentChars, Math.max(budget.left, 0))
-    : EXCERPT_CHARS;
+  // Both paths are bounded by the remaining total budget, not just the
+  // per-article cap: 100 excerpts of attacker-chosen text add up too.
+  const limit = Math.min(
+    options.includeContent ? options.maxContentChars : EXCERPT_CHARS,
+    Math.max(budget.left, 0)
+  );
 
   if (limit <= 0) {
     shaped.contentOmitted = 'budget';
@@ -200,9 +214,11 @@ export function shapeEntry(
     }
   } else {
     shaped.excerpt = text;
+    // Debited as well, so the total cap bounds a listing of 100 excerpts and not
+    // only the include_content path.
+    budget.left -= text.length;
     if (truncated) shaped.excerptTruncated = true;
   }
-  notes.add(UNTRUSTED_CONTENT_NOTE);
   return shaped;
 }
 
@@ -229,6 +245,12 @@ export function htmlToText(
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<[^>]+>/g, '')
     .replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, decodeEntity)
+    // Raw control characters present in the source markup, not just the numeric
+    // entities handled in decodeEntity: an ESC in an article body reaches the
+    // model \u2014 and any terminal rendering it \u2014 verbatim otherwise. Tab and
+    // newline survive, they are real formatting.
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
     .replace(/[ \t\u00a0]+/g, ' ')
     .replace(/\n\s*\n\s*\n+/g, '\n\n')
     .trim();

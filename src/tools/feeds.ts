@@ -8,6 +8,7 @@ import {
   setResourceKey,
   type ConfirmationStore,
 } from '../confirm.js';
+import { redactUrlCredentials } from '../redact.js';
 import {
   errorResult,
   jsonResult,
@@ -40,6 +41,28 @@ async function loadUnreadCounts(
 ): Promise<UnreadCountResponse> {
   return (await api.getJson('/unread-count')) as UnreadCountResponse;
 }
+
+/**
+ * Loads the unread counts, or `undefined` when that endpoint fails.
+ *
+ * In `list_feeds` and `list_categories` the counts are pure enrichment — one
+ * optional field per row. A 500 from `/unread-count` must not cost the caller the
+ * list it would otherwise have received. `get_unread_counts` does not use this:
+ * there the counts *are* the answer.
+ */
+export async function loadUnreadCountsOptional(
+  api: FreshRssApi
+): Promise<UnreadCountResponse | undefined> {
+  try {
+    return await loadUnreadCounts(api);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Note added when the enrichment above was unavailable. */
+export const UNREAD_COUNTS_UNAVAILABLE =
+  'The unread counts could not be loaded, so unreadCount is missing; the rest of this result is complete.';
 
 export function registerFeedReadTools(
   server: McpServer,
@@ -87,17 +110,20 @@ export function registerFeedReadTools(
           api.getJson(
             '/subscription/list'
           ) as Promise<SubscriptionListResponse>,
-          loadUnreadCounts(api),
+          loadUnreadCountsOptional(api),
         ]);
-        const unread = unreadCountIndex(counts.unreadcounts ?? []);
+        const unread = unreadCountIndex(counts?.unreadcounts ?? []);
         const feeds = (list.subscriptions ?? []).map((feed) =>
           shapeSubscription(feed, unread)
         );
         return jsonResult({
           feeds,
           feedCount: feeds.length,
-          totalUnread: counts.max,
-          notes: [UNTRUSTED_CONTENT_NOTE],
+          totalUnread: counts?.max,
+          notes:
+            counts === undefined
+              ? [UNTRUSTED_CONTENT_NOTE, UNREAD_COUNTS_UNAVAILABLE]
+              : [UNTRUSTED_CONTENT_NOTE],
         });
       })
   );
@@ -187,6 +213,10 @@ export function registerFeedWriteTools(
           .optional()
           .describe('Category to file the feed under; created if unknown'),
       },
+      // Stated rather than left to the default: this writes, but it only adds a
+      // subscription, so it is not destructive. It is also not idempotent —
+      // FreshRSS creates a second subscription for the same URL.
+      annotations: { destructiveHint: false, idempotentHint: false },
     },
     async ({ url, title, category }) =>
       run(async () => {
@@ -244,6 +274,9 @@ export function registerFeedWriteTools(
           .optional()
           .describe('Category to move the feed to'),
       },
+      // Overwrites the title and category, but nothing is deleted and applying
+      // the same call twice leaves the same state.
+      annotations: { destructiveHint: false, idempotentHint: true },
     },
     async ({ feed_id, title, category }) =>
       run(async () => {
@@ -337,12 +370,52 @@ function assertHttpUrl(url: string): string {
   try {
     parsed = new URL(url.trim());
   } catch {
-    throw new ToolInputError(`invalid url: ${url}`);
+    throw new ToolInputError(`invalid url: ${redactUrlCredentials(url)}`);
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new ToolInputError(
       `invalid url: only http:// and https:// feeds can be subscribed (got ${parsed.protocol})`
     );
   }
+  assertNotInternalHost(parsed);
   return parsed.toString();
+}
+
+/**
+ * Refuses URLs that only make sense from inside the FreshRSS host.
+ *
+ * `quickadd` is a server-side fetch: whatever arrives here is retrieved by the
+ * FreshRSS server, stored, and read back out by `list_articles`. That makes this
+ * tool an SSRF primitive, and it is reachable from injected text inside an
+ * article — so the two targets that matter are the host's own loopback and the
+ * link-local range that carries the cloud metadata services.
+ *
+ * Private LAN ranges (10/8, 172.16/12, 192.168/16, fc00::/7) are deliberately
+ * still allowed: a self-hosted FreshRSS legitimately subscribes to feeds
+ * elsewhere on its own network, and blocking that would break the normal case
+ * for the people running this server.
+ */
+function assertNotInternalHost(parsed: URL): void {
+  const host = parsed.hostname
+    .toLowerCase()
+    .replace(/^\[/, '')
+    .replace(/]$/, '');
+  const blocked =
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host === '0.0.0.0' ||
+    host === '::' ||
+    host === '::1' ||
+    /^127\./.test(host) ||
+    // 169.254/16 — link-local, including 169.254.169.254 (cloud metadata).
+    /^169\.254\./.test(host) ||
+    // fe80::/10 — IPv6 link-local.
+    /^fe[89ab]/.test(host);
+  if (blocked) {
+    throw new ToolInputError(
+      `refusing to subscribe to ${host}: the FreshRSS server would fetch this URL ` +
+        'itself, and loopback and link-local addresses are not feed sources — they ' +
+        'address the server or its cloud metadata service. Use a routable URL.'
+    );
+  }
 }

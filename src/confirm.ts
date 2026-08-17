@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
 const TOKEN_TTL_MS = 5 * 60 * 1000;
 /** Bounds the map so a loop of refused calls cannot grow it without limit. */
@@ -39,7 +39,13 @@ export class ConfirmationStore {
   consume(resource: string, token: string | undefined): boolean {
     const entry = this.pending.get(resource);
     if (entry === undefined || token === undefined) return false;
-    if (token !== entry.token || Date.now() >= entry.expiresAt) return false;
+    if (Date.now() >= entry.expiresAt) {
+      // Drop it here rather than leaving it for the MAX_PENDING eviction, so a
+      // stale token cannot sit in the map for the process lifetime.
+      this.pending.delete(resource);
+      return false;
+    }
+    if (!equalTokens(token, entry.token)) return false;
     this.pending.delete(resource);
     return true;
   }
@@ -48,6 +54,20 @@ export class ConfirmationStore {
   get ttlMinutes(): number {
     return Math.round(this.ttlMs / 60_000);
   }
+}
+
+/**
+ * Length-safe constant-time comparison.
+ *
+ * `timingSafeEqual` throws on a length mismatch, which would leak the length by
+ * itself, so both sides are hashed to a fixed width first. The token is handed
+ * to the model in cleartext one call earlier, so this is defence in depth rather
+ * than a fix for a reachable oracle.
+ */
+function equalTokens(given: string, expected: string): boolean {
+  const digest = (value: string): Buffer =>
+    createHash('sha256').update(value).digest();
+  return timingSafeEqual(digest(given), digest(expected));
 }
 
 /**

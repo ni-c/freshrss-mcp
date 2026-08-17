@@ -230,6 +230,26 @@ export class FreshRssApi {
     return response.text;
   }
 
+  /**
+   * POST of a form whose response is JSON (`stream/items/contents`).
+   *
+   * Exists so that endpoint goes through {@link parseJson} like every GET does,
+   * instead of a bare `JSON.parse` whose SyntaxError would carry the first
+   * characters of an HTML interstitial into the model context and skip the
+   * base-URL hint.
+   */
+  async postFormJson(
+    path: string,
+    fields: URLSearchParams,
+    timeoutMs?: number
+  ): Promise<unknown> {
+    return parseJson(
+      await this.postForm(path, fields, timeoutMs),
+      'POST',
+      path
+    );
+  }
+
   /** POST of a raw body (used by the OPML import, which reads php://input). */
   async postRaw(
     path: string,

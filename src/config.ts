@@ -1,3 +1,5 @@
+import { redactUrlCredentials } from './redact.js';
+
 export interface Config {
   /**
    * Base URL of the FreshRSS instance, e.g. `https://rss.example.com` — the
@@ -77,7 +79,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   try {
     parsed = new URL(url);
   } catch {
-    console.error(`freshrss-mcp: FRESHRSS_URL is not a valid URL: ${url}`);
+    // Redacted, and deliberately so: the userinfo check below only runs once the
+    // URL parses, so a value that does not parse at all but still carries
+    // credentials — "https://admin:s3cret@host:99999", an out-of-range port —
+    // would otherwise print the API password into the MCP client's log file.
+    console.error(
+      `freshrss-mcp: FRESHRSS_URL is not a valid URL: ${redactUrlCredentials(url)}`
+    );
     process.exit(1);
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {

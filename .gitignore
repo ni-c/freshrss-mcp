@@ -1,10 +1,10 @@
-# Apply as .gitignore (stored without the dot so it stays visible in the skill).
 node_modules/
 dist/
 coverage/
 docs/.vitepress/cache/
 docs/.vitepress/dist/
 *.log
+*.tgz
 .env
 .env.*
 *.local

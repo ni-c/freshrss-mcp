@@ -110,6 +110,15 @@ export function assertTagName(name: string, what: string): string {
       `invalid ${what} name: it must not contain a slash`
     );
   }
+  // `encodeURIComponent('..')` is `..`, so a dot segment survives into the path
+  // and the URL parser then removes the segment above it — addressing a
+  // different endpoint instead of a label. Slashes are blocked above, so this is
+  // the only remaining way to move within the path.
+  if (trimmed === '.' || trimmed === '..') {
+    throw new ToolInputError(
+      `invalid ${what} name: "." and ".." are not valid names`
+    );
+  }
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f\u007f]/.test(trimmed)) {
     throw new ToolInputError(
@@ -139,7 +148,12 @@ export function itemIdToDecimal(id: string): string {
     : id;
   if (/^[0-9]+$/.test(raw) && !raw.startsWith('0')) return raw;
   if (!/^[0-9a-fA-F]+$/.test(raw)) {
-    throw new ToolInputError(`unexpected article id from FreshRSS: ${id}`);
+    // Truncated: this value comes from the *response*, so a hostile or
+    // compromised instance would otherwise choose a string that lands in an
+    // error message the model reads.
+    throw new ToolInputError(
+      `unexpected article id from FreshRSS: ${id.slice(0, 80)}`
+    );
   }
   return BigInt(`0x${raw}`).toString(10);
 }

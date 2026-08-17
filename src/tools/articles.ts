@@ -248,8 +248,10 @@ export function registerArticleReadTools(
       run(async () => {
         const form = new URLSearchParams();
         for (const id of article_ids) form.append('i', assertArticleId(id));
-        const body = await api.postForm('/stream/items/contents', form);
-        const data = JSON.parse(body) as StreamResponse;
+        const data = (await api.postFormJson(
+          '/stream/items/contents',
+          form
+        )) as StreamResponse;
 
         const { articles, notes } = shapeItems(data.items ?? [], {
           includeContent: true,
@@ -336,6 +338,11 @@ export function registerArticleWriteTools(
           .optional()
           .describe('User labels to detach'),
       },
+      // Deliberately not confirmation-gated, unlike mark_all_as_read: the caller
+      // names every article explicitly and at most 100 of them, and each field
+      // can be set back. What is *not* recoverable is the per-article prior
+      // state, so this is declared destructive and a client may prompt for it.
+      annotations: { destructiveHint: true, idempotentHint: true },
     },
     async ({ article_ids, read, starred, add_labels, remove_labels }) =>
       run(async () => {

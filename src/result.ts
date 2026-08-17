@@ -29,8 +29,18 @@ export function jsonResult(data: unknown): CallToolResult {
         : value,
     2
   );
+  const note = `\n\nNote: the result exceeded ${MAX_RESULT_BYTES} characters, so article content was dropped. Fetch it for individual articles with get_articles.`;
+  if (stripped.length <= MAX_RESULT_BYTES) return textResult(stripped + note);
+
+  // Dropping `content`/`excerpt` is not always enough: the bulk can sit in fields
+  // this replacer does not touch — a listing of tens of thousands of feeds is all
+  // titles and URLs. Without this the "hard ceiling" would not be one, so the
+  // payload is cut off even though that leaves the JSON unparseable. Truncated
+  // JSON the model can see is still better than megabytes of context.
   return textResult(
-    `${stripped}\n\nNote: the result exceeded ${MAX_RESULT_BYTES} characters, so article content was dropped. Fetch it for individual articles with get_articles.`
+    `${stripped.slice(0, MAX_RESULT_BYTES)}\n\n… (truncated: the result exceeded ` +
+      `${MAX_RESULT_BYTES} characters even without article content, so the JSON above ` +
+      'is incomplete. Narrow the request — use the filters and the count parameter.)'
   );
 }
 

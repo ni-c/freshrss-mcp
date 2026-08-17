@@ -8,6 +8,7 @@ import {
   setResourceKey,
   type ConfirmationStore,
 } from '../confirm.js';
+import { redactOpmlCredentials } from '../redact.js';
 import { errorResult, run, textResult, ToolInputError } from '../result.js';
 import { UNTRUSTED_CONTENT_NOTE } from '../shape.js';
 
@@ -37,16 +38,42 @@ export function registerOpmlReadTools(
     },
     async () =>
       run(async () => {
-        const opml = await api.getText('/subscription/export');
+        // HTTP-auth feeds are stored as https://user:pass@host/feed and the
+        // export carries that verbatim in xmlUrl.
+        const opml = redactOpmlCredentials(
+          await api.getText('/subscription/export')
+        );
         const truncated = opml.length > MAX_EXPORT_CHARS;
         return textResult(
           `${UNTRUSTED_CONTENT_NOTE}\n\n` +
             (truncated
-              ? `${opml.slice(0, MAX_EXPORT_CHARS)}\n\n(truncated at ${MAX_EXPORT_CHARS} characters)`
+              ? `${opml.slice(0, MAX_EXPORT_CHARS)}\n\n(truncated at ${MAX_EXPORT_CHARS} characters; ` +
+                'use list_feeds for a complete overview of the subscriptions)'
               : opml)
         );
       })
   );
+}
+
+/**
+ * Refuses an OPML document with a document type declaration.
+ *
+ * No XML is parsed in this process, so there is no XXE exposure *here* — but the
+ * document is posted to FreshRSS, which parses it with libxml. A DOCTYPE is the
+ * carrier for both an entity-expansion bomb (a few hundred bytes that expand to
+ * gigabytes in the PHP worker) and an external-entity reference that would make
+ * the FreshRSS host fetch a URL or read a local file. A legitimate OPML file
+ * never needs one, and this server is the cheapest place to say no.
+ */
+function assertNoDoctype(opml: string): void {
+  if (/<!(doctype|entity)\b/i.test(opml)) {
+    throw new ToolInputError(
+      'the OPML document contains a document type or entity declaration, which is ' +
+        'refused: it is the delivery mechanism for XML entity-expansion and ' +
+        'external-entity attacks against the FreshRSS server. Remove the ' +
+        '<!DOCTYPE …> line; OPML does not need it.'
+    );
+  }
 }
 
 export function registerOpmlWriteTools(
@@ -81,6 +108,7 @@ export function registerOpmlWriteTools(
               'Split it or import it through the FreshRSS web interface.'
           );
         }
+        assertNoDoctype(opml);
         // The token is bound to the exact document: confirming a small OPML must
         // not authorise importing a different, larger one.
         const resource = setResourceKey('import_opml', [opml]);
