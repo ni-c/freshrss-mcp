@@ -1,12 +1,12 @@
 # freshrss-mcp
 
-[![CI](https://github.com/ni-c/freshrss-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ni-c/freshrss-mcp/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/@ni-c/freshrss-mcp)](https://www.npmjs.com/package/@ni-c/freshrss-mcp)
+[![CI](https://img.shields.io/github/actions/workflow/status/ni-c/freshrss-mcp/ci.yml?branch=main&label=CI)](https://github.com/ni-c/freshrss-mcp/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/@ni-c/freshrss-mcp)](https://www.npmjs.com/package/@ni-c/freshrss-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/@ni-c/freshrss-mcp)](https://www.npmjs.com/package/@ni-c/freshrss-mcp)
 [![node](https://img.shields.io/node/v/@ni-c/freshrss-mcp)](https://nodejs.org)
-[![license](https://img.shields.io/github/license/ni-c/freshrss-mcp)](LICENSE)
-[![container](https://img.shields.io/badge/ghcr.io-ni--c%2Ffreshrss--mcp-blue?logo=docker&logoColor=white)](https://github.com/ni-c/freshrss-mcp/pkgs/container/freshrss-mcp)
-[![docs](https://img.shields.io/badge/docs-freshrss--mcp.ni--c.de-blue)](https://freshrss-mcp.ni-c.de)
+[![license](https://img.shields.io/npm/l/@ni-c/freshrss-mcp)](LICENSE)
+[![container](https://img.shields.io/badge/ghcr.io-ni--c%2Ffreshrss--mcp-2496ed?logo=docker&logoColor=white)](https://github.com/ni-c/freshrss-mcp/pkgs/container/freshrss-mcp)
+[![docs](https://img.shields.io/badge/docs-freshrss--mcp.ni--c.de-4f46e5)](https://freshrss-mcp.ni-c.de)
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server for
 [FreshRSS](https://freshrss.org), the self-hosted RSS and Atom feed aggregator.
@@ -16,6 +16,17 @@ It speaks the Google Reader compatible API that FreshRSS exposes at
 assistant can actually use: numeric feed ids, category and label names, ISO
 dates and decimal article ids instead of `user/-/state/com.google/…` stream
 identifiers and hexadecimal item tags.
+
+**📖 Full documentation: [freshrss-mcp.ni-c.de](https://freshrss-mcp.ni-c.de)**
+
+<!-- SYNC: rendered from docs/public/architecture.svg, which carries its own
+     prefers-color-scheme block. The inline twin lives in docs/index.md. -->
+
+![Architecture: an MCP client speaks stdio to freshrss-mcp, which calls the Google Reader compatible API of FreshRSS over HTTPS with a GoogleLogin auth token](https://freshrss-mcp.ni-c.de/architecture.svg)
+
+<!-- Recorded with vhs from docs/demo.tape against a throwaway FreshRSS 1.29.1. -->
+
+![Demo: listing the tools, the subscribed feeds and the newest article through the MCP Inspector CLI](https://freshrss-mcp.ni-c.de/demo.gif)
 
 ## Requirements
 
