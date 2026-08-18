@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- The release workflow extracts the section of the version being tagged with awk,
      matching "## [x.y.z]". Keep that heading shape exactly. -->
 
+<!-- #region changelog -->
+
 ## [0.1.2] - 2026-08-18
 
 ### Fixed
@@ -82,3 +84,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: lint, build and tests on Node 22 and 24, `npm audit`, CodeQL, and a Trivy
   scan of the image on amd64 and arm64. Releases publish to npm via Trusted
   Publishing with provenance and register with the MCP Registry.
+
+<!-- #endregion changelog -->
