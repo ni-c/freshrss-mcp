@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- #region changelog -->
 
+## [0.1.3] - 2026-08-18
+
+### Fixed
+
+- `http://[::1]:…` no longer produces the "plain http to a non-local host, the
+  API password will be sent unencrypted" warning. `URL.hostname` keeps the
+  brackets around an IPv6 literal, so the loopback check never matched that
+  notation.
+
 ## [0.1.2] - 2026-08-18
 
 ### Fixed

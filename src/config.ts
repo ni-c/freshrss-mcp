@@ -118,10 +118,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 }
 
 function isLoopbackHost(hostname: string): boolean {
+  // URL.hostname keeps the brackets around an IPv6 literal, so comparing against
+  // a bare '::1' never matches and the plain-http warning fires on a loopback
+  // URL written as http://[::1]:8013.
+  const host = hostname.replace(/^\[|\]$/g, '');
   return (
-    hostname === 'localhost' ||
-    hostname.endsWith('.localhost') ||
-    hostname.startsWith('127.') ||
-    hostname === '::1'
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host.startsWith('127.') ||
+    host === '::1'
   );
 }

@@ -1,6 +1,6 @@
 {
   "name": "@ni-c/freshrss-mcp",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "mcpName": "io.github.ni-c/freshrss-mcp",
   "description": "Model Context Protocol (MCP) server for FreshRSS, the self-hosted RSS feed aggregator",
   "keywords": [
