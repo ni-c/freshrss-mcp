@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- The release workflow extracts the section of the version being tagged with awk,
      matching "## [x.y.z]". Keep that heading shape exactly. -->
 
-## [Unreleased]
+## [0.1.2] - 2026-08-18
 
 ### Fixed
 
