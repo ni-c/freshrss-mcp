@@ -19,10 +19,15 @@ identifiers and hexadecimal item tags.
 
 **📖 Full documentation: [freshrss-mcp.ni-c.de](https://freshrss-mcp.ni-c.de)**
 
-<!-- SYNC: rendered from docs/public/architecture.svg, which carries its own
-     prefers-color-scheme block. The inline twin lives in docs/index.md. -->
-
-![Architecture: an MCP client speaks stdio to freshrss-mcp, which calls the Google Reader compatible API of FreshRSS over HTTPS with a GoogleLogin auth token](https://freshrss-mcp.ni-c.de/architecture.svg)
+<!-- <picture> is resolved against the colour scheme of the page showing it, so GitHub
+     picks the variant that matches its own theme toggle. npm strips <picture> and
+     <source> when it sanitises the README and keeps the <img>, which is why that
+     fallback brings its own dark card instead of relying on a media query. -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://freshrss-mcp.ni-c.de/architecture-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://freshrss-mcp.ni-c.de/architecture-light.svg">
+  <img src="https://freshrss-mcp.ni-c.de/architecture.svg" alt="An MCP client speaks stdio to freshrss-mcp, which calls the Google Reader compatible API of FreshRSS over HTTPS with a GoogleLogin auth token" width="800">
+</picture>
 
 <!-- Recorded with vhs from docs/demo.tape against a throwaway FreshRSS 1.29.1. -->
 

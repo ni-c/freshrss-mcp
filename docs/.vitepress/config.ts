@@ -33,7 +33,9 @@ export default defineConfig({
     ['meta', { property: 'og:title', content: 'freshrss-mcp' }],
     ['meta', { property: 'og:description', content: description }],
     ['meta', { property: 'og:url', content: site }],
-    ['meta', { name: 'twitter:card', content: 'summary' }],
+    ['meta', { property: 'og:image', content: `${site}/og.png` }],
+    ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
+    ['meta', { name: 'twitter:image', content: `${site}/og.png` }],
   ],
 
   themeConfig: {

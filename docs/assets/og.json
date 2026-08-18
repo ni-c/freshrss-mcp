@@ -1,0 +1,8 @@
+{
+  "$comment": "Copy for docs/public/og.png, the GitHub social preview and the OpenGraph card. Rendered by scripts/gen-assets.mjs. Tagline and badges are split by hand because the renderer does not wrap text.",
+  "tagline": [
+    "MCP server for FreshRSS — read your feeds, search articles,",
+    "and keep subscriptions and tags in order."
+  ],
+  "badges": ["16 tools", "MIT", "Node ≥22"]
+}

@@ -10,6 +10,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The architecture diagram and the demo recording were not displayed at all — on
+  GitHub or on npm. GitHub Pages had never issued the TLS certificate for
+  freshrss-mcp.ni-c.de (`https_enforced` was `false`, the only repository where it
+  was), so every image embedded from that domain was proxied by camo and answered
+  with 502. The certificate has been reissued and HTTPS is enforced.
+- The architecture diagram no longer depends on the reader's operating system. It
+  carried a `prefers-color-scheme` block, which resolves against the OS rather than
+  the theme toggle of GitHub or npm — so dark-mode readers on a light OS got the
+  light artwork on a dark page, and this diagram painted an opaque white rectangle
+  over the full canvas, which is the worst case there. The README now uses
+  `<picture>`, which is resolved against the page, and the `<img>` that npm falls
+  back to brings its own card instead of a media query.
+- The documentation site declared no `og:image` at all, so links to it had no
+  preview card anywhere.
+
+### Changed
+
+- The diagram is generated from a single source, `docs/assets/architecture.source.svg`,
+  by `npm run assets`. The rendered copies had already drifted apart; CI now fails
+  if one of them is edited by hand.
+- `docs/public/og.png` is generated at exactly 1280x640, GitHub's recommended size
+  for a social preview.
+- The demo recording is shown on the documentation home page as well, not only in
+  the README, and is pinned to the content column so its width no longer depends on
+  what the vhs tape happened to record.
+- The TypeScript major is now parked in `.github/dependabot.yml` with its reason,
+  instead of living only as an `@dependabot ignore` on the closed PR #1.
+
 ## [0.1.1] - 2026-08-17
 
 ### Changed
