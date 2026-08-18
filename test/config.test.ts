@@ -92,10 +92,19 @@ describe('loadConfig', () => {
     spy.mockRestore();
   });
 
-  it('does not warn about plain http to localhost', () => {
+  it('does not warn about plain http to loopback in any notation', () => {
+    // Regression: URL.hostname returns "[::1]" with the brackets, so comparing
+    // against a bare "::1" never matched and this warned about a loopback URL as
+    // if the API password were going over the network.
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    loadConfig(env({ ...complete, FRESHRSS_URL: 'http://localhost:8013' }));
-    expect(spy.mock.calls.flat().join(' ')).not.toMatch(/unencrypted/);
+    for (const url of [
+      'http://localhost:8013',
+      'http://127.0.0.1:8013',
+      'http://[::1]:8013',
+    ]) {
+      loadConfig(env({ ...complete, FRESHRSS_URL: url }));
+      expect(spy.mock.calls.flat().join(' '), url).not.toMatch(/unencrypted/);
+    }
     spy.mockRestore();
   });
 
