@@ -238,19 +238,21 @@ function stripMarkup(html: string): string {
   let previous: string;
   do {
     previous = text;
-    text = text
-      // Script and style bodies are markup, not article text. A body whose
-      // closing tag never arrives runs to the end of the input: that is still
-      // script source, and letting it through would hand the model JavaScript
-      // labelled as an article.
-      .replace(/<(script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, ' ')
-      .replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, '\n')
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<[^>]+>/g, '')
-      // htmlToText slices its input, which cuts mid-tag as a matter of course,
-      // and feeds are not required to be well formed either. Without this the
-      // opening fragment survives as literal text.
-      .replace(/<[a-z!/?][^>]*$/i, '');
+    // Script and style bodies are markup, not article text. A body whose
+    // closing tag never arrives runs to the end of the input: that is still
+    // script source, and letting it through would hand the model JavaScript
+    // labelled as an article.
+    text = text.replace(
+      /<(script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi,
+      ' '
+    );
+    text = text.replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, '\n');
+    text = text.replace(/<br\s*\/?>/gi, '\n');
+    text = text.replace(/<[^>]+>/g, '');
+    // htmlToText slices its input, which cuts mid-tag as a matter of course,
+    // and feeds are not required to be well formed either. Without this the
+    // opening fragment survives as literal text.
+    text = text.replace(/<[a-z!/?][^>]*$/i, '');
   } while (text !== previous);
   return text;
 }
