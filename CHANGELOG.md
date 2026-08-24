@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- #region changelog -->
 
+## [0.1.4] - 2026-08-24
+
+### Fixed
+
+- Article text no longer comes back with HTML in it. Entities were decoded
+  after the tags had already been stripped, so any encoding of `<script>` —
+  `&lt;`, `&#60;` or `&#x3c;` — was rebuilt verbatim in the output, event
+  handler attributes along with it. Markup is now removed again after decoding,
+  repeatedly, until nothing changes.
+- A `<script>` whose closing tag falls outside the parsed slice no longer
+  delivers its JavaScript as article text, and a tag cut in half by that slice
+  no longer survives as a fragment.
+
 ## [0.1.3] - 2026-08-18
 
 ### Fixed
