@@ -226,12 +226,19 @@ export function shapeEntry(
 export const EXCERPT_CHARS = 300;
 
 /**
- * One pass of markup removal. It only ever deletes characters, so applying it
- * repeatedly reaches a fixed point.
+ * Removes markup until none is left.
+ *
+ * A single pass is not enough: removing one tag can splice its neighbours into
+ * a new one, so `<scr<script>ipt>` would come back out as `<script>`. Each pass
+ * only ever deletes characters, so repeating until the string stops changing
+ * terminates, and it terminates on the first repetition for ordinary markup.
  */
 function stripMarkup(html: string): string {
-  return (
-    html
+  let text = html;
+  let previous: string;
+  do {
+    previous = text;
+    text = text
       // Script and style bodies are markup, not article text. A body whose
       // closing tag never arrives runs to the end of the input: that is still
       // script source, and letting it through would hand the model JavaScript
@@ -243,8 +250,9 @@ function stripMarkup(html: string): string {
       // htmlToText slices its input, which cuts mid-tag as a matter of course,
       // and feeds are not required to be well formed either. Without this the
       // opening fragment survives as literal text.
-      .replace(/<[a-z!/?][^>]*$/i, '')
-  );
+      .replace(/<[a-z!/?][^>]*$/i, '');
+  } while (text !== previous);
+  return text;
 }
 
 /**
@@ -260,19 +268,14 @@ export function htmlToText(
   limit: number
 ): { text: string; truncated: boolean } {
   const slice = html.slice(0, limit * 12 + 4096);
-  let stripped = stripMarkup(slice).replace(
-    /&(#x?[0-9a-f]+|[a-z]+);/gi,
-    decodeEntity
-  );
   // Entities decode to whatever they name, angle brackets included, and that
-  // happens after the tag pass has already run — so `&lt;script&gt;` in a feed
-  // arrives as literal `<script>` in the output unless the tags are taken out
-  // again. Repeat until nothing changes. Only markup is re-examined, never
-  // entities, so doubly encoded text stays the text it is.
-  for (let previous = ''; previous !== stripped;) {
-    previous = stripped;
-    stripped = stripMarkup(stripped);
-  }
+  // happens once the tag pass is already over — so `&lt;script&gt;` in a feed
+  // arrives as literal `<script>` unless the markup is taken out again
+  // afterwards. Decoding runs exactly once, so the second pass is the last one
+  // needed: doubly encoded text stays the text it is.
+  const stripped = stripMarkup(
+    stripMarkup(slice).replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, decodeEntity)
+  );
 
   const text = stripped
     // Raw control characters present in the source markup, not just the numeric

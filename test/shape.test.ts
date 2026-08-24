@@ -81,6 +81,17 @@ describe('htmlToText', () => {
     expect(text).not.toContain('onerror');
   });
 
+  it('does not let one removal splice a new tag out of its neighbours', () => {
+    // A single pass over "<scr<script>ipt>" deletes the inner tag and leaves
+    // "<script>" behind, assembled from what surrounded it.
+    const { text } = htmlToText(
+      '<p>&lt;scr&lt;script&gt;ipt&gt;alert(1)&lt;/script&gt;</p>',
+      500
+    );
+    expect(text).not.toMatch(/<script/i);
+    expect(text).not.toContain('alert(1)');
+  });
+
   it('leaves doubly encoded markup as the text it is', () => {
     // One decoding pass yields "&lt;b&gt;", which is text and not a tag. The
     // markup pass must not keep chewing until that becomes one.
