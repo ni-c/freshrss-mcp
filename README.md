@@ -7,6 +7,7 @@
 [![license](https://img.shields.io/npm/l/@ni-c/freshrss-mcp)](LICENSE)
 [![container](https://img.shields.io/badge/ghcr.io-ni--c%2Ffreshrss--mcp-2496ed?logo=docker&logoColor=white)](https://github.com/ni-c/freshrss-mcp/pkgs/container/freshrss-mcp)
 [![docs](https://img.shields.io/badge/docs-freshrss--mcp.ni--c.de-4f46e5)](https://freshrss-mcp.ni-c.de)
+[![sponsor](https://img.shields.io/badge/sponsor-ni--c-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ni-c)
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server for
 [FreshRSS](https://freshrss.org), the self-hosted RSS and Atom feed aggregator.

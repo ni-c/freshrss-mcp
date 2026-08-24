@@ -22,6 +22,7 @@
     "url": "https://github.com/ni-c/freshrss-mcp/issues"
   },
   "homepage": "https://github.com/ni-c/freshrss-mcp#readme",
+  "funding": "https://github.com/sponsors/ni-c",
   "type": "module",
   "bin": {
     "freshrss-mcp": "dist/index.js"
