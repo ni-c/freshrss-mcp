@@ -226,6 +226,28 @@ export function shapeEntry(
 export const EXCERPT_CHARS = 300;
 
 /**
+ * One pass of markup removal. It only ever deletes characters, so applying it
+ * repeatedly reaches a fixed point.
+ */
+function stripMarkup(html: string): string {
+  return (
+    html
+      // Script and style bodies are markup, not article text. A body whose
+      // closing tag never arrives runs to the end of the input: that is still
+      // script source, and letting it through would hand the model JavaScript
+      // labelled as an article.
+      .replace(/<(script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, ' ')
+      .replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, '\n')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      // htmlToText slices its input, which cuts mid-tag as a matter of course,
+      // and feeds are not required to be well formed either. Without this the
+      // opening fragment survives as literal text.
+      .replace(/<[a-z!/?][^>]*$/i, '')
+  );
+}
+
+/**
  * Converts article HTML into plain text, bounded by `limit`.
  *
  * The input is sliced before parsing: entries can be half a megabyte of markup
@@ -238,13 +260,21 @@ export function htmlToText(
   limit: number
 ): { text: string; truncated: boolean } {
   const slice = html.slice(0, limit * 12 + 4096);
-  const text = slice
-    // Script and style bodies are markup, not article text.
-    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, '\n')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, decodeEntity)
+  let stripped = stripMarkup(slice).replace(
+    /&(#x?[0-9a-f]+|[a-z]+);/gi,
+    decodeEntity
+  );
+  // Entities decode to whatever they name, angle brackets included, and that
+  // happens after the tag pass has already run — so `&lt;script&gt;` in a feed
+  // arrives as literal `<script>` in the output unless the tags are taken out
+  // again. Repeat until nothing changes. Only markup is re-examined, never
+  // entities, so doubly encoded text stays the text it is.
+  for (let previous = ''; previous !== stripped;) {
+    previous = stripped;
+    stripped = stripMarkup(stripped);
+  }
+
+  const text = stripped
     // Raw control characters present in the source markup, not just the numeric
     // entities handled in decodeEntity: an ESC in an article body reaches the
     // model \u2014 and any terminal rendering it \u2014 verbatim otherwise. Tab and

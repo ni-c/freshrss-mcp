@@ -60,6 +60,53 @@ describe('htmlToText', () => {
     expect(htmlToText('a&#0;b', 100).text).toBe('a b');
   });
 
+  // Entities decode to angle brackets, and that happens after the tag pass. Any
+  // encoding of "<script>" therefore used to reappear as markup in the output.
+  it.each([
+    ['named', '&lt;script&gt;alert(1)&lt;/script&gt;'],
+    ['decimal', '&#60;script&#62;alert(1)&#60;/script&#62;'],
+    ['hexadecimal', '&#x3c;script&#x3e;alert(1)&#x3c;/script&#x3e;'],
+  ])('does not let a %s entity rebuild a script tag', (_name, encoded) => {
+    const { text } = htmlToText(`<p>${encoded}</p>`, 500);
+    expect(text).not.toMatch(/<script/i);
+    expect(text).not.toContain('alert(1)');
+  });
+
+  it('does not let an entity rebuild an event handler attribute', () => {
+    const { text } = htmlToText(
+      '<p>&lt;img src=x onerror=alert(1)&gt;</p>',
+      500
+    );
+    expect(text).not.toMatch(/<img/i);
+    expect(text).not.toContain('onerror');
+  });
+
+  it('leaves doubly encoded markup as the text it is', () => {
+    // One decoding pass yields "&lt;b&gt;", which is text and not a tag. The
+    // markup pass must not keep chewing until that becomes one.
+    expect(htmlToText('<p>&amp;lt;b&amp;gt;</p>', 500).text).toBe('&lt;b&gt;');
+  });
+
+  it('drops a script body whose closing tag never arrives', () => {
+    const { text } = htmlToText('<p>Text</p><script>var a=1; evil();', 500);
+    expect(text).toBe('Text');
+  });
+
+  it('drops an unterminated tag at the end of the input', () => {
+    expect(htmlToText('<p>Text</p><script src=x', 500).text).toBe('Text');
+  });
+
+  // The price of the rule above: a bare "<" followed by a letter at the very end
+  // of the text goes with it. Consistent with the rest of the function — "x<y>z"
+  // has always come out as "xz" — and preferable to letting tag fragments through.
+  it('also drops a trailing angle bracket that was meant literally', () => {
+    expect(htmlToText('<p>if x&lt;y</p>', 500).text).toBe('if x');
+    // Only at the end, and only before a letter: ordinary comparisons survive.
+    expect(htmlToText('<p>if x &lt; y then z</p>', 500).text).toBe(
+      'if x < y then z'
+    );
+  });
+
   it('truncates at the limit and says so', () => {
     const result = htmlToText(`<p>${'x'.repeat(500)}</p>`, 50);
     expect(result.truncated).toBe(true);
