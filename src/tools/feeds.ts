@@ -8,6 +8,7 @@ import {
   setResourceKey,
   type ConfirmationStore,
 } from '../confirm.js';
+import { assertRoutableHosts } from '../hosts.js';
 import { redactUrlCredentials } from '../redact.js';
 import {
   errorResult,
@@ -220,7 +221,7 @@ export function registerFeedWriteTools(
     },
     async ({ url, title, category }) =>
       run(async () => {
-        const feedUrl = assertHttpUrl(url);
+        const feedUrl = await assertHttpUrl(url);
         const result = (await api.getJson(
           '/subscription/quickadd',
           { quickadd: feedUrl },
@@ -365,7 +366,15 @@ async function editSubscription(
   );
 }
 
-function assertHttpUrl(url: string): string {
+/**
+ * Validates the URL `quickadd` is about to be handed.
+ *
+ * `quickadd` is a server-side fetch: whatever arrives here is retrieved by the
+ * FreshRSS server, stored, and read back out by `list_articles`. That makes this
+ * tool an SSRF primitive, and it is reachable from injected text inside an
+ * article — so the host is checked before the URL leaves this process.
+ */
+async function assertHttpUrl(url: string): Promise<string> {
   let parsed: URL;
   try {
     parsed = new URL(url.trim());
@@ -377,45 +386,6 @@ function assertHttpUrl(url: string): string {
       `invalid url: only http:// and https:// feeds can be subscribed (got ${parsed.protocol})`
     );
   }
-  assertNotInternalHost(parsed);
+  await assertRoutableHosts([parsed.hostname]);
   return parsed.toString();
-}
-
-/**
- * Refuses URLs that only make sense from inside the FreshRSS host.
- *
- * `quickadd` is a server-side fetch: whatever arrives here is retrieved by the
- * FreshRSS server, stored, and read back out by `list_articles`. That makes this
- * tool an SSRF primitive, and it is reachable from injected text inside an
- * article — so the two targets that matter are the host's own loopback and the
- * link-local range that carries the cloud metadata services.
- *
- * Private LAN ranges (10/8, 172.16/12, 192.168/16, fc00::/7) are deliberately
- * still allowed: a self-hosted FreshRSS legitimately subscribes to feeds
- * elsewhere on its own network, and blocking that would break the normal case
- * for the people running this server.
- */
-function assertNotInternalHost(parsed: URL): void {
-  const host = parsed.hostname
-    .toLowerCase()
-    .replace(/^\[/, '')
-    .replace(/]$/, '');
-  const blocked =
-    host === 'localhost' ||
-    host.endsWith('.localhost') ||
-    host === '0.0.0.0' ||
-    host === '::' ||
-    host === '::1' ||
-    /^127\./.test(host) ||
-    // 169.254/16 — link-local, including 169.254.169.254 (cloud metadata).
-    /^169\.254\./.test(host) ||
-    // fe80::/10 — IPv6 link-local.
-    /^fe[89ab]/.test(host);
-  if (blocked) {
-    throw new ToolInputError(
-      `refusing to subscribe to ${host}: the FreshRSS server would fetch this URL ` +
-        'itself, and loopback and link-local addresses are not feed sources — they ' +
-        'address the server or its cloud metadata service. Use a routable URL.'
-    );
-  }
 }

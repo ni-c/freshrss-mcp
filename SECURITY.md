@@ -28,10 +28,21 @@ Two things are worth calling out because they are not obvious:
   `https://user:password@host/feed`. This server redacts the userinfo part before any
   feed URL reaches a tool result or the OPML export, but the FreshRSS instance still
   holds the original.
-- **`subscribe_feed` makes the FreshRSS server fetch a URL.** That is a server-side
-  request, so it is refused for loopback and link-local addresses (including cloud
-  metadata endpoints). Private LAN addresses are allowed, because self-hosted setups
-  legitimately subscribe to feeds on their own network.
+- **`subscribe_feed` and `import_opml` make the FreshRSS server fetch a URL.** Those
+  are server-side requests, so they are refused for loopback and link-local addresses
+  (including cloud metadata endpoints) — the feed URL for `subscribe_feed`, every
+  `xmlUrl` and `htmlUrl` for `import_opml`. Private LAN addresses are allowed, because
+  self-hosted setups legitimately subscribe to feeds on their own network.
+
+  A literal is decided numerically, so notations that spell the same address
+  differently (`[::ffff:127.0.0.1]`, `localhost.`) do not get past it. A hostname is
+  additionally resolved and its addresses are checked, which stops the obvious
+  `feed.example.com A 127.0.0.1` case — but that half is a barrier, not a boundary:
+  a name this process cannot resolve is passed on (the FreshRSS server may sit in a
+  different network with its own resolver), FreshRSS resolves the name again when it
+  fetches, and a redirect or a feed link discovered on the fetched page is a URL this
+  server never saw. The boundary that holds is where FreshRSS itself stands on the
+  network.
 
 The API password is separate from the web login password and can be rotated on its own
 in **Settings -> Profile -> API management**, which is the fastest containment step if

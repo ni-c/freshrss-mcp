@@ -62,16 +62,54 @@ The userinfo part is stripped before any feed URL reaches a tool result, so
 the original; this only stops it from being copied into a model context and a
 conversation transcript.
 
-## subscribe_feed is a server-side fetch
+## subscribe_feed and import_opml are server-side fetches
 
 When you subscribe to a URL, **FreshRSS** retrieves it, stores whatever parses, and
 `list_articles` reads the result back. That makes the tool an SSRF primitive — and
-one reachable from injected text inside an article.
+one reachable from injected text inside an article. `import_opml` reaches the same
+capability: `/subscription/import` subscribes to every `xmlUrl` in the document and
+fetches it, and the site link in `htmlUrl` is fetched for the favicon.
 
-Loopback and link-local addresses are refused, which covers the cloud metadata
-endpoint `169.254.169.254` and anything on the FreshRSS host's own loopback. Private
-LAN ranges (`10/8`, `172.16/12`, `192.168/16`) stay allowed, because a self-hosted
-FreshRSS legitimately subscribes to feeds on its own network.
+The URLs in an OPML document are read by walking it the way an XML parser does. That
+is not a detail: searching for `xmlUrl="` with a regular expression pairs quotes by
+scanning raw text, and a decoy `xmlUrl="` planted inside a single-quoted attribute
+value or a comment makes it read a harmless host while libxml — the parser on the
+FreshRSS side — reads the real one beside it. A document that does not scan as
+well-formed XML is refused rather than guessed at.
+
+Two things follow from the same principle, that the document being checked has to be
+the document that gets fetched. Its encoding declaration is rewritten to UTF-8, which
+is what the body is sent as: libxml believes the declaration over the bytes, so a
+document declaring `UTF-7` would have it read `+AHg-mlUrl="…"` as `xmlUrl="…"`, an
+attribute no reader of the raw text can see under that name. And the checked URLs are
+written back into the document before it is sent, exactly as `subscribe_feed` hands
+FreshRSS the parsed URL rather than the string it was given — otherwise
+`http://ok.example.com\@127.0.0.1/feed`, whose host is `ok.example.com` to a URL
+parser and `127.0.0.1` to a fetcher, would be checked as one and fetched as the other.
+
+Loopback and link-local addresses are refused on both paths, which covers the cloud
+metadata endpoint `169.254.169.254` and anything on the FreshRSS host's own loopback.
+The metadata service's *names* (`metadata.google.internal`, `instance-data` and their
+siblings) are refused as names, because they resolve only on the instance itself.
+Private LAN ranges (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`) stay allowed,
+because a self-hosted FreshRSS legitimately subscribes to feeds on its own network.
+
+Addresses are classified numerically rather than by comparing strings. That matters
+because `URL` rewrites an IPv4-mapped IPv6 literal before any check sees it —
+`http://[::ffff:169.254.169.254]/` arrives as `[::ffff:a9fe:a9fe]`, and a dual-stack
+client dials it as plain `169.254.169.254`. The IPv4-compatible, IPv4-translated and
+NAT64 prefixes are unwrapped the same way, and `localhost.` is read as `localhost`.
+
+A hostname is also resolved and its addresses are checked, so a DNS record pointing at
+`127.0.0.1` does not walk around the guard. Three things that check cannot do: a name
+this process fails to resolve is passed on rather than refused, because the FreshRSS
+server may sit in a different network with its own resolver; FreshRSS resolves the name
+again when it fetches, so a record that changes in between is outside what any
+client-side check can see; and what FreshRSS does after the first response — following
+a redirect, or discovering a feed link on the page it was given — is a URL this server
+never saw. Where FreshRSS sits on the network is the boundary that actually holds. If
+it runs somewhere that can reach a metadata service or an unauthenticated admin port,
+put that out of its reach there rather than relying on this check.
 
 ## import_opml refuses a DOCTYPE
 

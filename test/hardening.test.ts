@@ -307,6 +307,18 @@ describe('subscribe_feed SSRF guard', () => {
     'http://169.254.169.254/latest/meta-data/',
     'http://[::1]/feed',
     'http://0.0.0.0/feed',
+    // GHSA-qqh2-7466-82f8: URL normalises an IPv4-mapped IPv6 literal into hex
+    // before the guard sees it, so string comparison approved these while a
+    // dual-stack client dials them as 127.0.0.1 and 169.254.169.254.
+    'http://[::ffff:127.0.0.1]:8080/feed',
+    'http://[::ffff:169.254.169.254]/latest/meta-data/iam/security-credentials/',
+    'http://[::127.0.0.1]/feed',
+    // The root label makes the same name look different to a string comparison.
+    'http://localhost./feed',
+    // Names for the metadata service: they resolve to 169.254.169.254 on the
+    // FreshRSS host and to nothing here, so resolving cannot catch them.
+    'http://metadata.google.internal/computeMetadata/v1/',
+    'http://instance-data/latest/meta-data/',
   ])('refuses %s', async (url) => {
     const result = await call({}, 'subscribe_feed', { url });
     expect(result.isError).toBe(true);
@@ -336,6 +348,266 @@ describe('subscribe_feed SSRF guard', () => {
     );
     expect(result.isError).toBeFalsy();
     expect(dataOf(result).feedId).toBe(9);
+  });
+});
+
+describe('import_opml SSRF guard', () => {
+  // GHSA-qqh2-7466-82f8, second finding: /subscription/import subscribes to
+  // every xmlUrl and fetches it server-side — the capability subscribe_feed
+  // guards, reached through a door that had no check on it at all.
+  function opmlWith(url: string, attribute = 'xmlUrl'): string {
+    return `<?xml version="1.0"?><opml version="2.0"><body><outline text="feed" ${attribute}="${url}"/></body></opml>`;
+  }
+
+  it.each([
+    'http://169.254.169.254/latest/meta-data/iam/security-credentials/',
+    'http://127.0.0.1:8080/admin',
+    'http://[::ffff:169.254.169.254]/latest/meta-data/',
+    'http://localhost/feed',
+  ])('refuses an OPML document pointing at %s', async (url) => {
+    const result = await call({}, 'import_opml', { opml: opmlWith(url) });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/loopback and link-local/);
+  });
+
+  it('refuses a loopback htmlUrl, which FreshRSS fetches for the favicon', async () => {
+    const result = await call({}, 'import_opml', {
+      opml: opmlWith('http://127.0.0.1:9000/', 'htmlUrl'),
+    });
+    expect(result.isError).toBe(true);
+  });
+
+  // The first fix read the attributes with a regular expression, which pairs
+  // quotes by scanning raw text. A literal xmlUrl=" planted where the XML parser
+  // does not see an attribute makes it pair the wrong quotes: it read a decoy
+  // host while libxml read the real one next to it.
+  it.each([
+    [
+      'a decoy inside a single-quoted attribute value',
+      `<?xml version="1.0"?><opml version="2.0"><body><outline text='xmlUrl="http://news.example.com/rss' xmlUrl="http://169.254.169.254/latest/meta-data/iam/security-credentials/"/></body></opml>`,
+    ],
+    [
+      'a decoy naming htmlUrl instead',
+      `<?xml version="1.0"?><opml version="2.0"><body><outline text='htmlUrl="http://ok.example.com/' xmlUrl="http://127.0.0.1:8080/admin"/></body></opml>`,
+    ],
+    [
+      'a decoy inside a comment, which libxml discards',
+      `<?xml version="1.0"?><opml version="2.0"><body><!-- xmlUrl="http://ok.example.com/rss --><outline xmlUrl="http://169.254.169.254/latest/meta-data/"/></body></opml>`,
+    ],
+  ])('sees the real xmlUrl past %s', async (_name, opml) => {
+    const result = await call({}, 'import_opml', { opml });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/loopback and link-local/);
+  });
+
+  it('does not reach the API for a document with a decoy attribute', async () => {
+    const stub = stubFreshRss({});
+    const client = await connect();
+    await client.callTool({
+      name: 'import_opml',
+      arguments: {
+        opml: `<opml><body><outline text='xmlUrl="http://ok.example.com/rss' xmlUrl="http://169.254.169.254/"/></body></opml>`,
+      },
+    });
+    expect(stub.readerCalls).toHaveLength(0);
+  });
+
+  it('ignores a loopback URL that only appears in a comment', async () => {
+    const result = await call({}, 'import_opml', {
+      opml:
+        '<opml><body><!-- example: xmlUrl="http://127.0.0.1/rss" -->' +
+        '<outline xmlUrl="https://news.example.com/rss"/></body></opml>',
+    });
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toMatch(/confirm_token/);
+  });
+
+  it.each([
+    ['an unterminated attribute value', '<opml><outline xmlUrl="http://a/>'],
+    ['an attribute with no value at all', '<opml><outline xmlUrl/></opml>'],
+    ['an unquoted value', '<opml><outline xmlUrl=http://a/></opml>'],
+    ['an unterminated comment', '<opml><!-- <outline xmlUrl="http://a/"/>'],
+    ['an unterminated CDATA section', '<opml><![CDATA[ <outline'],
+    ['an unterminated processing instruction', '<opml><?php echo 1'],
+    ['an unterminated end tag', '<opml><body></body'],
+    ['an unterminated start tag', '<opml><outline text="a"'],
+    ['a "<" that starts no tag', '<opml>a < b</opml>'],
+    ['a stray slash inside a tag', '<opml><outline / text="a"></opml>'],
+    [
+      'a declaration that is not a document type',
+      '<opml><![IGNORE[x]]></opml>',
+    ],
+  ])('refuses a document with %s rather than guessing', async (_name, opml) => {
+    const result = await call({}, 'import_opml', { opml });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/not well-formed/);
+  });
+
+  it('reads past a CDATA section that contains markup', async () => {
+    const result = await call({}, 'import_opml', {
+      opml:
+        '<opml><head><title><![CDATA[ <outline xmlUrl="http://127.0.0.1/"/> ]]></title>' +
+        '</head><body><outline xmlUrl="https://news.example.com/rss"/></body></opml>',
+    });
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain('news.example.com');
+  });
+
+  it('reads past a processing instruction', async () => {
+    const result = await call({}, 'import_opml', {
+      opml:
+        '<?xml version="1.0"?><?xml-stylesheet href="a.xsl"?>' +
+        '<opml><body><outline xmlUrl="http://127.0.0.1/rss"/></body></opml>',
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/loopback and link-local/);
+  });
+
+  it.each([
+    ['a relative xmlUrl', 'rss.xml'],
+    ['a protocol-relative xmlUrl on a routable host', '//news.example.com/rss'],
+  ])('still imports %s', async (_name, url) => {
+    const result = await call({}, 'import_opml', { opml: opmlWith(url) });
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toMatch(/confirm_token/);
+  });
+
+  it('refuses feed:// instead of downgrading it to plain http', async () => {
+    // Reading it as the http URL it conventionally stands for would fetch over
+    // plaintext a feed that is served over https, and subscribe_feed refuses the
+    // scheme too — the two tools have to answer this the same way.
+    const result = await call({}, 'import_opml', {
+      opml: opmlWith('feed://news.example.com/rss'),
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/only http:\/\/ and https:\/\//);
+  });
+
+  it.each([
+    ['//169.254.169.254/rss'],
+    ['http://metadata.google.internal/computeMetadata/v1/'],
+    ['http://instance-data/latest/meta-data/'],
+  ])('refuses %s, which still names the metadata service', async (url) => {
+    const result = await call({}, 'import_opml', { opml: opmlWith(url) });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/loopback and link-local/);
+  });
+
+  // libxml believes the encoding declaration over the bytes, so a document that
+  // declares UTF-7 is read as different characters on the FreshRSS side than
+  // here: '+AHg-mlUrl' arrives there as 'xmlUrl', and '+ADw-' as '<'.
+  it.each([
+    [
+      'an attribute name',
+      `<?xml version="1.0" encoding="UTF-7"?><opml version="2.0"><body><outline text="a" +AHg-mlUrl="http://127.0.0.1/evil"/></body></opml>`,
+    ],
+    [
+      'a whole element',
+      `<?xml version="1.0" encoding="UTF-7"?><opml version="2.0"><body>+ADw-outline xmlUrl+AD0AIg-http://127.0.0.1/evil+ACIALwA+</body></opml>`,
+    ],
+    [
+      'a document type declaration',
+      `<?xml version="1.0" encoding="UTF-7"?>+ADw-!DOCTYPE opml [+ADw-!ENTITY e "http://169.254.169.254/latest/meta-data/">]><opml version="2.0"><body><outline text="a" xmlUrl="&e;"/></body></opml>`,
+    ],
+  ])('does not let a UTF-7 declaration smuggle %s', async (_name, opml) => {
+    const stub = stubFreshRss({ '/subscription/import': 'OK' });
+    const client = await connect();
+    const first = (await client.callTool({
+      name: 'import_opml',
+      arguments: { opml },
+    })) as CallToolResult;
+    const token = /confirm_token="([^"]+)"/.exec(textOf(first))?.[1];
+    if (token !== undefined) {
+      await client.callTool({
+        name: 'import_opml',
+        arguments: { opml, confirm_token: token },
+      });
+    }
+    // Whatever reaches FreshRSS must no longer claim an encoding that makes it
+    // read characters this check never saw.
+    for (const call of stub.readerCalls) {
+      expect(call.body.toLowerCase()).not.toContain('utf-7');
+    }
+  });
+
+  it('sends the URL it checked, not one a fetcher would read differently', async () => {
+    // WHATWG URL reads the host of this as ok.example.com; curl splits at the @
+    // and connects to 127.0.0.1. Forwarding the document verbatim would mean
+    // checking one host and fetching another.
+    const opml = opmlWith('http://ok.example.com\\@127.0.0.1/feed');
+    const stub = stubFreshRss({ '/subscription/import': 'OK' });
+    const client = await connect();
+    const first = (await client.callTool({
+      name: 'import_opml',
+      arguments: { opml },
+    })) as CallToolResult;
+    const token = /confirm_token="([^"]+)"/.exec(textOf(first))?.[1] as string;
+    await client.callTool({
+      name: 'import_opml',
+      arguments: { opml, confirm_token: token },
+    });
+    const sent = stub.readerCalls.at(-1)?.body ?? '';
+    expect(sent).toContain('http://ok.example.com/@127.0.0.1/feed');
+    expect(sent).not.toContain('ok.example.com\\@');
+  });
+
+  it('sees an xmlUrl behind a namespace prefix', async () => {
+    const result = await call({}, 'import_opml', {
+      opml: '<opml version="2.0" xmlns:o="urn:x"><body><outline o:xmlUrl="http://127.0.0.1/evil"/></body></opml>',
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/loopback and link-local/);
+  });
+
+  it('refuses a file:// xmlUrl, which would read the FreshRSS host disk', async () => {
+    const result = await call({}, 'import_opml', {
+      opml: opmlWith('file:///etc/passwd'),
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/only http:\/\/ and https:\/\//);
+  });
+
+  it('decodes entities before checking, as libxml does', async () => {
+    // Read raw this is host '169&' — the '#' would start a fragment. FreshRSS
+    // sees http://169.254.169.254/ because libxml resolves the reference first.
+    const result = await call({}, 'import_opml', {
+      opml: opmlWith('http://169&#46;254.169.254/latest/meta-data/'),
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/loopback and link-local/);
+  });
+
+  it('issues no confirmation token for a document it would refuse', async () => {
+    const result = await call({}, 'import_opml', {
+      opml: opmlWith('http://169.254.169.254/latest/meta-data/'),
+    });
+    expect(textOf(result)).not.toMatch(/confirm_token/);
+  });
+
+  it('does not reach the API for a refused document', async () => {
+    const stub = stubFreshRss({});
+    const client = await connect();
+    await client.callTool({
+      name: 'import_opml',
+      arguments: { opml: opmlWith('http://169.254.169.254/latest/meta-data/') },
+    });
+    expect(stub.readerCalls).toHaveLength(0);
+  });
+
+  it('names the target hosts in the confirmation prompt', async () => {
+    const result = await call({}, 'import_opml', {
+      opml: opmlWith('https://news.example.com/rss'),
+    });
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain('news.example.com');
+  });
+
+  it('still allows a private LAN feed, which self-hosted setups need', async () => {
+    const result = await call({}, 'import_opml', {
+      opml: opmlWith('http://192.168.1.50/rss.xml'),
+    });
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toMatch(/confirm_token/);
   });
 });
 

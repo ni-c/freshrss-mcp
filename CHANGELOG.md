@@ -10,6 +10,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- #region changelog -->
 
+## [0.1.5] - 2026-08-25
+
+### Security
+
+- `subscribe_feed` no longer accepts a loopback or link-local address written as
+  an IPv4-mapped IPv6 literal. `URL` canonicalises `http://[::ffff:127.0.0.1]/`
+  into `[::ffff:7f00:1]` and `http://[::ffff:169.254.169.254]/` into
+  `[::ffff:a9fe:a9fe]` before the guard saw them, so the string comparison found
+  nothing it recognised and approved both — while every dual-stack client dials
+  them as `127.0.0.1` and the cloud metadata service. Addresses are now reduced
+  to the IPv4 address they carry and compared numerically, which also covers the
+  IPv4-compatible, IPv4-translated and NAT64 forms. `localhost.` with the root
+  label got past the same comparison and is now read as `localhost`.
+  ([GHSA-qqh2-7466-82f8](https://github.com/ni-c/freshrss-mcp/security/advisories/GHSA-qqh2-7466-82f8))
+- `import_opml` now checks the URLs in the document. `/subscription/import` makes
+  FreshRSS subscribe to every `xmlUrl` and fetch it server-side — the same
+  capability `subscribe_feed` guards, reached through a door that had no check on
+  it at all. Every `xmlUrl` and `htmlUrl` is now held to the same rule, entity
+  references are resolved first (as libxml does), and a scheme other than
+  http/https is refused rather than left to FreshRSS to open.
+  ([GHSA-qqh2-7466-82f8](https://github.com/ni-c/freshrss-mcp/security/advisories/GHSA-qqh2-7466-82f8))
+- The attributes of an imported OPML document are read by walking it the way an
+  XML parser does, not by searching for them with a regular expression. A regex
+  pairs quotes by scanning raw text, so a literal `xmlUrl="` planted inside a
+  single-quoted attribute value or inside a comment made it pair the wrong
+  quotes: it would have read a harmless decoy host while libxml, which parses the
+  document on the FreshRSS side, read the loopback URL next to it. A document
+  that does not scan as well-formed XML is now refused rather than guessed at.
+- A hostname that is not a literal address is resolved and its addresses are
+  checked, so a DNS record pointing at `127.0.0.1` or `169.254.169.254` no longer
+  walks around the guard. A name that cannot be resolved here is still passed on:
+  the FreshRSS server may sit in a different network with its own resolver.
+- An imported OPML document is now sent with its encoding declaration rewritten
+  to UTF-8, which is what the body is actually encoded as. libxml believes the
+  declaration over the bytes, so `<?xml version="1.0" encoding="UTF-7"?>` made it
+  read `+AHg-mlUrl="http://127.0.0.1/"` as `xmlUrl="http://127.0.0.1/"` — an
+  attribute no check reading the document as text can see under that name. The
+  same trick hid a `<!DOCTYPE>` from the declaration check, putting entity
+  expansion and external entities back on the table.
+- The URLs that were checked are written back into the document before it is
+  sent, the way `subscribe_feed` hands FreshRSS the parsed URL rather than the
+  string it was given. Checking one document and forwarding another is what let
+  `http://ok.example.com\@127.0.0.1/feed` past: a URL parser reads its host as
+  `ok.example.com`, the fetcher splits at the `@` and connects to `127.0.0.1`.
+- An `xmlUrl` behind a namespace prefix (`o:xmlUrl`) is matched on its local
+  name, which is the name libxml reports it under.
+- The names of the cloud metadata service — `metadata.google.internal`,
+  `instance-data` and their siblings — are refused by name. They resolve to
+  `169.254.169.254` on the instance and to nothing anywhere else, so resolving
+  them is exactly what cannot catch them.
+
+### Changed
+
+- The `import_opml` confirmation prompt names the hosts the document would
+  subscribe to instead of only counting its outline elements, and a document that
+  will be refused no longer gets a confirmation token first.
+- An `xmlUrl` written as `//host/path` is read as the http URL it stands for, and
+  a relative one is left to FreshRSS — both appear in real OPML exports and must
+  not fail an otherwise valid import. `feed://` is refused, the way
+  `subscribe_feed` already refused it: reading it as `http://` would quietly
+  fetch over plaintext a feed that is served over https.
+
 ## [0.1.4] - 2026-08-24
 
 ### Fixed
