@@ -422,12 +422,45 @@ describe('import_opml SSRF guard', () => {
     expect(textOf(result)).toMatch(/confirm_token/);
   });
 
-  it('refuses a document it cannot read as XML rather than guessing', async () => {
-    const result = await call({}, 'import_opml', {
-      opml: '<opml><body><outline xmlUrl="http://news.example.com/rss></body></opml>',
-    });
+  it.each([
+    ['an unterminated attribute value', '<opml><outline xmlUrl="http://a/>'],
+    ['an attribute with no value at all', '<opml><outline xmlUrl/></opml>'],
+    ['an unquoted value', '<opml><outline xmlUrl=http://a/></opml>'],
+    ['an unterminated comment', '<opml><!-- <outline xmlUrl="http://a/"/>'],
+    ['an unterminated CDATA section', '<opml><![CDATA[ <outline'],
+    ['an unterminated processing instruction', '<opml><?php echo 1'],
+    ['an unterminated end tag', '<opml><body></body'],
+    ['an unterminated start tag', '<opml><outline text="a"'],
+    ['a "<" that starts no tag', '<opml>a < b</opml>'],
+    ['a stray slash inside a tag', '<opml><outline / text="a"></opml>'],
+    [
+      'a declaration that is not a document type',
+      '<opml><![IGNORE[x]]></opml>',
+    ],
+  ])('refuses a document with %s rather than guessing', async (_name, opml) => {
+    const result = await call({}, 'import_opml', { opml });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/not well-formed/);
+  });
+
+  it('reads past a CDATA section that contains markup', async () => {
+    const result = await call({}, 'import_opml', {
+      opml:
+        '<opml><head><title><![CDATA[ <outline xmlUrl="http://127.0.0.1/"/> ]]></title>' +
+        '</head><body><outline xmlUrl="https://news.example.com/rss"/></body></opml>',
+    });
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain('news.example.com');
+  });
+
+  it('reads past a processing instruction', async () => {
+    const result = await call({}, 'import_opml', {
+      opml:
+        '<?xml version="1.0"?><?xml-stylesheet href="a.xsl"?>' +
+        '<opml><body><outline xmlUrl="http://127.0.0.1/rss"/></body></opml>',
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/loopback and link-local/);
   });
 
   it.each([

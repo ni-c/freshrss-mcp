@@ -69,6 +69,30 @@ describe('internalHostKind', () => {
   ])('leaves %s alone', (url) => {
     expect(internalHostKind(hostnameOf(url))).toBeNull();
   });
+
+  // `URL` always hands over the compressed hex form, but the classifier is
+  // exported and takes a hostname from anywhere — including a DNS answer, which
+  // is where the dotted-quad spellings actually arrive.
+  it.each([
+    ['::ffff:127.0.0.1', 'loopback'],
+    ['::ffff:169.254.169.254', 'link-local'],
+    ['::127.0.0.1', 'loopback'],
+    ['0:0:0:0:0:ffff:a9fe:a9fe', 'link-local'],
+    ['[::ffff:127.0.0.1]', 'loopback'],
+    ['FE80::1', 'link-local'],
+  ])('classifies the bare literal %s as %s', (host, kind) => {
+    expect(internalHostKind(host)).toBe(kind);
+  });
+
+  it.each([
+    '::ffff:1.1.1.1',
+    '2606:4700:4700::1111',
+    'not a host at all',
+    '',
+    '1:2:3:4:5:6:7:8:9',
+  ])('leaves the bare literal %j alone', (host) => {
+    expect(internalHostKind(host)).toBeNull();
+  });
 });
 
 describe('assertRoutableHosts', () => {
