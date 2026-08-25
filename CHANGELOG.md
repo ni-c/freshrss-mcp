@@ -10,6 +10,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- #region changelog -->
 
+## [0.1.6] - 2026-08-26
+
+### Fixed
+
+- A feed whose domain a resolver sinkholes is no longer refused. Every ad
+  blocker and DNS filter answers `0.0.0.0` for a blocked name, and `0.0.0.0/8`
+  classifies as loopback — so 0.1.5 turned "your resolver blocks this domain"
+  into "refusing to point FreshRSS at a loopback address", which was both wrong
+  and unhelpful. A resolved unspecified address is now passed over; nothing can
+  be fetched from it. `0.0.0.0` written into the URL itself is still refused,
+  because that one does address the host.
+- An IPv6 scope id is stripped before the address is read. `net.isIP` accepts
+  `::ffff:127.0.0.1%eth0`, which made the dotted-quad fold miss its anchor and
+  the address come out as routable. A URL cannot carry one, but a resolver
+  answer can.
+- A group of an IPv6 literal that is not hexadecimal is rejected outright rather
+  than handed to `parseInt`, which stops at the first character it dislikes and
+  returns a number for `7f00xyz` just as happily.
+
+### Security
+
+- The metadata endpoints outside `169.254/16` are refused as well:
+  `100.100.100.200` (Alibaba Cloud) and `192.0.0.192` (Oracle's legacy
+  endpoint). Neither is link-local by address, so no range check reaches them,
+  but both are the same thing by purpose.
+
 ## [0.1.5] - 2026-08-25
 
 ### Security

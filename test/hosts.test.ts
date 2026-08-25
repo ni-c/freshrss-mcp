@@ -95,6 +95,24 @@ describe('internalHostKind', () => {
   });
 });
 
+describe('metadata endpoints and scope ids', () => {
+  it.each([
+    ['100.100.100.200', 'link-local'],
+    ['192.0.0.192', 'link-local'],
+  ])('refuses the metadata endpoint %s', (host, kind) => {
+    expect(internalHostKind(host)).toBe(kind);
+  });
+
+  it.each([
+    ['::ffff:127.0.0.1%lo', 'loopback'],
+    ['::ffff:169.254.169.254%eth0', 'link-local'],
+    ['fe80::1%eth0', 'link-local'],
+    ['::%lo', 'loopback'],
+  ])('reads %s despite the scope id', (host, kind) => {
+    expect(internalHostKind(host)).toBe(kind);
+  });
+});
+
 describe('assertRoutableHosts', () => {
   it('refuses a name that resolves to loopback', async () => {
     lookup.mockResolvedValue([{ address: '127.0.0.1', family: 4 }]);
@@ -127,6 +145,19 @@ describe('assertRoutableHosts', () => {
     await expect(
       assertRoutableHosts(['rss.internal.example'])
     ).resolves.toBeUndefined();
+  });
+
+  it('does not read a sinkholed name as loopback', async () => {
+    // Every ad blocker answers 0.0.0.0 for a blocked domain. That is the
+    // resolver declining, not the name addressing the FreshRSS host.
+    lookup.mockResolvedValue([{ address: '0.0.0.0', family: 4 }]);
+    await expect(
+      assertRoutableHosts(['ads.example.com'])
+    ).resolves.toBeUndefined();
+  });
+
+  it('still refuses 0.0.0.0 given as a literal', async () => {
+    await expect(assertRoutableHosts(['0.0.0.0'])).rejects.toThrow(/loopback/);
   });
 
   it('decides a literal without asking the resolver', async () => {
