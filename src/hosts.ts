@@ -41,6 +41,16 @@ const METADATA_NAMES = new Set([
 ]);
 
 /**
+ * Metadata endpoints that sit outside 169.254/16.
+ *
+ * Alibaba Cloud answers on 100.100.100.200, which is carrier-grade NAT space,
+ * and Oracle's legacy endpoint is 192.0.0.192, which is IETF protocol
+ * assignments. Neither is link-local by address, but both are the same thing by
+ * purpose, and neither is somewhere a feed lives.
+ */
+const METADATA_ADDRESSES = new Set(['100.100.100.200', '192.0.0.192']);
+
+/**
  * Classifies a `URL.hostname` that addresses the fetching host or its link-local
  * range, or returns null for anything routable.
  *
@@ -60,6 +70,7 @@ export function internalHostKind(hostname: string): InternalHostKind | null {
   const host = bareHost(hostname);
   if (host === 'localhost' || host.endsWith('.localhost')) return 'loopback';
   if (METADATA_NAMES.has(host)) return 'link-local';
+  if (METADATA_ADDRESSES.has(host)) return 'link-local';
 
   const version = isIP(host);
   if (version === 4) return ipv4Kind(host.split('.').map(Number));
@@ -107,6 +118,12 @@ export async function assertRoutableHosts(hostnames: string[]): Promise<void> {
       for (let name = pending.pop(); name !== undefined; name = pending.pop()) {
         if (Date.now() > deadline) return;
         for (const address of await resolveQuietly(name)) {
+          // A resolver that sinkholes a name answers 0.0.0.0 or ::, which is
+          // what every ad blocker does. That is the resolver declining to
+          // answer, not the name addressing the FreshRSS host — refusing it as
+          // loopback would misdescribe it and make every blocklisted domain
+          // unsubscribable. Nothing is fetchable from it either way.
+          if (isUnspecified(address)) continue;
           const kind = internalHostKind(address);
           if (kind !== null) throw refusal(`${name} (${address})`, kind);
         }
@@ -139,6 +156,14 @@ async function resolveQuietly(name: string): Promise<string[]> {
   }
 }
 
+/** True for `0.0.0.0` and `::`, in any spelling a resolver might return. */
+function isUnspecified(address: string): boolean {
+  const host = bareHost(address);
+  if (isIP(host) === 4) return host.split('.').every((part) => part === '0');
+  const groups = expandIpv6(host);
+  return groups !== null && groups.every((group) => group === 0);
+}
+
 function bareHost(hostname: string): string {
   return (
     hostname
@@ -146,6 +171,10 @@ function bareHost(hostname: string): string {
       // URL.hostname keeps the brackets around an IPv6 literal, so a bare '::1'
       // would never match.
       .replace(/^\[|]$/g, '')
+      // A scope id belongs to the interface, not to the address. `isIP` accepts
+      // it, so leaving it on would desynchronise every check below from what
+      // `isIP` just agreed was an address.
+      .replace(/%.*$/, '')
       // 'localhost.' is the same name as 'localhost' — the root label is what
       // makes it fully qualified, not a different host.
       .replace(/\.+$/, '')
@@ -178,8 +207,10 @@ function expandIpv6(address: string): number[] | null {
 
 function toGroups(groups: string[]): number[] | null {
   if (groups.length !== 8) return null;
-  const numbers = groups.map((group) => parseInt(group, 16));
-  return numbers.some((value) => Number.isNaN(value)) ? null : numbers;
+  // Tested rather than left to `parseInt`, which stops at the first character it
+  // does not like and returns a number for '7f00xyz' just as happily.
+  if (!groups.every((group) => /^[0-9a-f]{1,4}$/.test(group))) return null;
+  return groups.map((group) => parseInt(group, 16));
 }
 
 /**
