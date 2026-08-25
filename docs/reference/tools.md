@@ -137,7 +137,7 @@ before cannot be recovered, which is why it is gated.
 FreshRSS discovers the feed from a website URL and then downloads it, so this can take
 a while — the timeout is 120 s. Loopback and link-local URLs are refused: FreshRSS
 fetches the URL itself, which would make this an
-[SSRF primitive](/guide/security#subscribe-feed-is-a-server-side-fetch).
+[SSRF primitive](/guide/security#subscribe-feed-and-import-opml-are-server-side-fetches).
 
 ### update_feed
 
@@ -171,7 +171,14 @@ first, a category and a label of the same name cannot be told apart here.
 Subscribes to every feed in the document, creates the categories it names, then
 refreshes everything — minutes, on a large file. There is no bulk undo. Documents with
 a `<!DOCTYPE>` or `<!ENTITY>` declaration are
-[refused](/guide/security#import-opml-refuses-a-doctype).
+[refused](/guide/security#import-opml-refuses-a-doctype), and so are documents whose
+`xmlUrl` or `htmlUrl` points at a loopback or link-local address, or at a scheme other
+than http/https — FreshRSS fetches each of them
+[server-side](/guide/security#subscribe-feed-and-import-opml-are-server-side-fetches).
+A document that does not read as well-formed XML is refused rather than guessed at.
+What reaches FreshRSS is the document as checked: its encoding declaration rewritten to
+UTF-8 and each feed URL written back in its parsed form. The confirmation prompt names
+the hosts the document would subscribe to.
 
 The token is bound to a fingerprint of the exact document, so confirming one OPML
 cannot authorise importing another.

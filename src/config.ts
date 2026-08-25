@@ -1,3 +1,4 @@
+import { internalHostKind } from './hosts.js';
 import { redactUrlCredentials } from './redact.js';
 
 export interface Config {
@@ -118,14 +119,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 }
 
 function isLoopbackHost(hostname: string): boolean {
-  // URL.hostname keeps the brackets around an IPv6 literal, so comparing against
-  // a bare '::1' never matches and the plain-http warning fires on a loopback
-  // URL written as http://[::1]:8013.
-  const host = hostname.replace(/^\[|\]$/g, '');
-  return (
-    host === 'localhost' ||
-    host.endsWith('.localhost') ||
-    host.startsWith('127.') ||
-    host === '::1'
-  );
+  // Same classifier the SSRF guard uses, so a loopback URL written as
+  // http://[::1]:8013 or http://[::ffff:127.0.0.1]:8013 is recognised here too
+  // and the plain-http warning does not fire on it.
+  return internalHostKind(hostname) === 'loopback';
 }

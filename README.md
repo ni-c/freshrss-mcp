@@ -147,11 +147,17 @@ has no query parameter; narrow the result with `feed_id`/`category` and
   `https://user:password@host/feed`. The userinfo part is stripped before a feed
   URL reaches a tool result or the OPML export, so `list_feeds` cannot print the
   password of a paid or private feed into the transcript.
-- **`subscribe_feed` refuses internal targets.** FreshRSS fetches the URL
-  server-side, which makes the tool an SSRF primitive reachable from text inside
-  an article. Loopback and link-local addresses — including cloud metadata
-  endpoints — are rejected. Private LAN addresses stay allowed, because
-  self-hosted setups legitimately subscribe to feeds on their own network.
+- **`subscribe_feed` and `import_opml` refuse internal targets.** FreshRSS
+  fetches those URLs server-side, which makes both tools an SSRF primitive
+  reachable from text inside an article. Loopback and link-local addresses —
+  including cloud metadata endpoints — are rejected, for the feed URL and for
+  every `xmlUrl`/`htmlUrl` in an OPML document. Addresses are compared
+  numerically, so an IPv4-mapped IPv6 literal such as `[::ffff:169.254.169.254]`
+  is caught too, and a hostname is resolved before it is accepted. An OPML
+  document is read the way an XML parser reads it, and what reaches FreshRSS is
+  the document as checked — so the URL that was inspected is the URL that gets
+  fetched. Private LAN addresses stay allowed, because self-hosted setups
+  legitimately subscribe to feeds on their own network.
 - **`import_opml` refuses a `<!DOCTYPE>`.** No XML is parsed in this process, but
   the document is handed to FreshRSS, where a document type declaration is the
   carrier for entity-expansion and external-entity attacks. OPML never needs one.
