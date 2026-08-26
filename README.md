@@ -1,24 +1,26 @@
 # freshrss-mcp
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ni-c/freshrss-mcp/ci.yml?branch=main&label=CI)](https://github.com/ni-c/freshrss-mcp/actions/workflows/ci.yml)
-[![npm version](https://img.shields.io/npm/v/@ni-c/freshrss-mcp)](https://www.npmjs.com/package/@ni-c/freshrss-mcp)
-[![npm downloads](https://img.shields.io/npm/dm/@ni-c/freshrss-mcp)](https://www.npmjs.com/package/@ni-c/freshrss-mcp)
-[![node](https://img.shields.io/node/v/@ni-c/freshrss-mcp)](https://nodejs.org)
-[![license](https://img.shields.io/npm/l/@ni-c/freshrss-mcp)](LICENSE)
-[![container](https://img.shields.io/badge/ghcr.io-ni--c%2Ffreshrss--mcp-2496ed?logo=docker&logoColor=white)](https://github.com/ni-c/freshrss-mcp/pkgs/container/freshrss-mcp)
-[![docs](https://img.shields.io/badge/docs-freshrss--mcp.ni--c.de-4f46e5)](https://freshrss-mcp.ni-c.de)
+[![npm version](https://img.shields.io/npm/v/%40ni-c%2Ffreshrss-mcp)](https://www.npmjs.com/package/@ni-c/freshrss-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/%40ni-c%2Ffreshrss-mcp)](https://www.npmjs.com/package/@ni-c/freshrss-mcp)
+[![node](https://img.shields.io/node/v/%40ni-c%2Ffreshrss-mcp)](https://nodejs.org)
+[![license](https://img.shields.io/npm/l/%40ni-c%2Ffreshrss-mcp)](LICENSE)
+[![container](https://img.shields.io/badge/ghcr.io-ni--c%2Ffreshrss--mcp-blue)](https://github.com/ni-c/freshrss-mcp/pkgs/container/freshrss-mcp)
+[![docs](https://img.shields.io/badge/docs-freshrss--mcp.ni--c.de-informational)](https://freshrss-mcp.ni-c.de)
 [![sponsor](https://img.shields.io/badge/sponsor-ni--c-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ni-c)
 
-A [Model Context Protocol](https://modelcontextprotocol.io) server for
+A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for
 [FreshRSS](https://freshrss.org), the self-hosted RSS and Atom feed aggregator.
 
-It speaks the Google Reader compatible API that FreshRSS exposes at
-`/api/greader.php`, and it hides that API's quirks behind tool arguments an
-assistant can actually use: numeric feed ids, category and label names, ISO
-dates and decimal article ids instead of `user/-/state/com.google/…` stream
-identifiers and hexadecimal item tags.
+Lets MCP clients like Claude Code, Claude Desktop or Codex work through your feeds:
+see what is unread, read the articles, mark them, and manage subscriptions and
+categories.
 
-**📖 Full documentation: [freshrss-mcp.ni-c.de](https://freshrss-mcp.ni-c.de)**
+It speaks the Google Reader compatible API that FreshRSS exposes at
+`/api/greader.php`, and hides that API's quirks behind tool arguments an assistant can
+actually use: numeric feed ids, category and label names, ISO dates and decimal
+article ids instead of `user/-/state/com.google/…` stream identifiers and hexadecimal
+item tags.
 
 <!-- <picture> is resolved against the colour scheme of the page showing it, so GitHub
      picks the variant that matches its own theme toggle. npm strips <picture> and
