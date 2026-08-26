@@ -19,6 +19,8 @@ features:
     details: The Google Reader API speaks in stream identifiers and hexadecimal item tags. These tools take numeric feed ids, category and label names, ISO dates and decimal article ids, and hand back plain text instead of raw HTML.
   - title: Runs anywhere stdio does
     details: A single npx command, a Claude Desktop JSON block, a Codex TOML entry, or a multi-arch container image with an SBOM and build provenance.
+  - title: Narrow it to a reading list
+    details: 'FRESHRSS_READ_ONLY=true registers the read tools and nothing else. FRESHRSS_ALLOW_TOOLS cuts finer — essential for a curated seven, your own comma-separated list, or a whole family with list_* — and FRESHRSS_DENY_TOOLS subtracts. Whatever is filtered out does not exist on the protocol rather than failing when called, and a name that matches no tool stops the server at startup instead of quietly going missing.'
   - title: Built for untrusted feeds
     details: Every article was written by a stranger on the internet, so responses are marked as data, destructive tools need a server-issued token, feed URLs are stripped of credentials, and article text is capped per article and per response.
 ---

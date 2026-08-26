@@ -17,7 +17,15 @@ export interface Config {
    */
   apiPassword: string | undefined;
   insecureTls: boolean;
-  readOnly: boolean;
+  readOnly: boolean; /**
+   * Raw value of `FRESHRSS_ALLOW_TOOLS` — comma-separated tool names, `list_*`
+   * prefixes, or `essential`. Kept unparsed on purpose: this file is a mirror of
+   * the environment, and the names can only be checked against the tool
+   * catalogue, which `buildToolFilter` does.
+   */
+  allowTools: string | undefined;
+  /** Raw value of `FRESHRSS_DENY_TOOLS`, same shape, subtracted from the above. */
+  denyTools: string | undefined;
 }
 
 /** Shown when the configuration is incomplete — at startup and on every API call. */
@@ -57,6 +65,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const apiPassword = env.FRESHRSS_API_PASSWORD;
   const insecureTls = env.FRESHRSS_INSECURE_TLS === 'true';
   const readOnly = env.FRESHRSS_READ_ONLY === 'true';
+  const allowTools = env.FRESHRSS_ALLOW_TOOLS;
+  const denyTools = env.FRESHRSS_DENY_TOOLS;
 
   const missing = [
     !url && 'FRESHRSS_URL',
@@ -73,7 +83,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   delete env.FRESHRSS_API_PASSWORD;
 
   if (!url) {
-    return { url: undefined, user, apiPassword, insecureTls, readOnly };
+    return {
+      url: undefined,
+      user,
+      apiPassword,
+      insecureTls,
+      readOnly,
+      allowTools,
+      denyTools,
+    };
   }
 
   let parsed: URL;
@@ -115,6 +133,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     apiPassword,
     insecureTls,
     readOnly,
+    allowTools,
+    denyTools,
   };
 }
 
