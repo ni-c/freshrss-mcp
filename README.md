@@ -16,6 +16,11 @@ Lets MCP clients like Claude Code, Claude Desktop or Codex work through your fee
 see what is unread, read the articles, mark them, and manage subscriptions and
 categories.
 
+Sixteen tools is the ceiling, not the floor: `FRESHRSS_ALLOW_TOOLS=essential`
+registers a curated seven instead, and a model picks the right tool far more
+reliably from seven than from sixteen — see
+[choosing which tools load](#choosing-which-tools-load).
+
 It speaks the Google Reader compatible API that FreshRSS exposes at
 `/api/greader.php`, and hides that API's quirks behind tool arguments an assistant can
 actually use: numeric feed ids, category and label names, ISO dates and decimal
@@ -53,6 +58,8 @@ item tags.
 | `FRESHRSS_API_PASSWORD` | yes      | The **API password** from the profile page, not the web login password.                                              |
 | `FRESHRSS_READ_ONLY`    | no       | `true` registers only the read tools.                                                                                |
 | `FRESHRSS_INSECURE_TLS` | no       | `true` accepts self-signed certificates for this connection only.                                                    |
+| `FRESHRSS_ALLOW_TOOLS`  | no       | Comma-separated tool names, `list_*` prefixes, or `essential` for a curated preset                                   |
+| `FRESHRSS_DENY_TOOLS`   | no       | Same syntax; removed from whatever `FRESHRSS_ALLOW_TOOLS` left                                                       |
 
 The server starts without credentials so its tools stay listable; every call
 then fails with these setup instructions.
@@ -216,3 +223,25 @@ the tagged job, which would check out the old tree.
 ## License
 
 MIT
+
+### Choosing which tools load
+
+`FRESHRSS_ALLOW_TOOLS` and `FRESHRSS_DENY_TOOLS` take comma-separated tool names;
+a trailing `*` matches a whole family. `essential` is a curated preset of
+seven: `list_feeds`, `list_categories`, `get_unread_counts`, `list_articles`, `get_articles`, `mark_articles`, `mark_all_as_read`.
+
+```sh
+FRESHRSS_ALLOW_TOOLS=essential
+FRESHRSS_ALLOW_TOOLS=list_feeds,list_articles,mark_articles
+FRESHRSS_DENY_TOOLS=delete_*
+```
+
+An entry that matches no tool aborts startup and names it, so a typo cannot
+silently hide a tool — an absent tool is not something anyone traces back to an
+environment variable. A filtered tool is never registered, so it is absent from
+`tools/list` and unknown to `tools/call` alike, exactly like a write tool under
+`FRESHRSS_READ_ONLY`.
+
+If you run several of these servers at once, [mcp-hub](https://mcp-hub.ni-c.de)
+is the other answer — its `/hub` endpoint replaces every server's tools with six
+meta-tools.

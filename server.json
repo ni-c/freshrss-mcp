@@ -48,6 +48,18 @@
           "description": "Set to true to accept a self-signed certificate for this connection only",
           "isRequired": false,
           "format": "boolean"
+        },
+        {
+          "name": "FRESHRSS_ALLOW_TOOLS",
+          "description": "Comma-separated tool names or list_* prefixes to register; 'essential' selects a curated preset (default: all tools)",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "FRESHRSS_DENY_TOOLS",
+          "description": "Comma-separated tool names or list_* prefixes to remove from whatever FRESHRSS_ALLOW_TOOLS left",
+          "isRequired": false,
+          "format": "string"
         }
       ]
     },
@@ -88,6 +100,18 @@
           "description": "Set to true to accept a self-signed certificate for this connection only",
           "isRequired": false,
           "format": "boolean"
+        },
+        {
+          "name": "FRESHRSS_ALLOW_TOOLS",
+          "description": "Comma-separated tool names or list_* prefixes to register; 'essential' selects a curated preset (default: all tools)",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "FRESHRSS_DENY_TOOLS",
+          "description": "Comma-separated tool names or list_* prefixes to remove from whatever FRESHRSS_ALLOW_TOOLS left",
+          "isRequired": false,
+          "format": "string"
         }
       ]
     }

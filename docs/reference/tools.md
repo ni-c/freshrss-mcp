@@ -1,5 +1,10 @@
 # Tools
 
+All sixteen are registered unless you say otherwise. `FRESHRSS_ALLOW_TOOLS` and
+`FRESHRSS_DENY_TOOLS` narrow the list to the ones you want, and `essential` selects a
+curated seven — see
+[choosing the tools that load](/guide/configuration#choosing-the-tools-that-load).
+
 Sixteen tools: eight read, eight write. With `FRESHRSS_READ_ONLY=true` only the read
 tools are registered.
 

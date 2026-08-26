@@ -69,3 +69,53 @@ visible to child processes and in `/proc/<pid>/environ` for the process lifetime
 
 The login uses POST rather than GET so the password does not land in the FreshRSS
 access log, and both the auth token and the write token are cached in memory only.
+
+## Choosing the tools that load
+
+Read-only mode is one cut, along a line this server drew for you.
+`FRESHRSS_ALLOW_TOOLS` and `FRESHRSS_DENY_TOOLS` let you draw your own:
+
+```sh
+FRESHRSS_ALLOW_TOOLS=essential
+FRESHRSS_ALLOW_TOOLS=list_feeds,list_articles,mark_articles
+FRESHRSS_DENY_TOOLS=delete_*
+```
+
+Why bother, when all sixteen work: a model chooses the right tool far more
+reliably from a handful than from a long list, and every tool it can see costs
+context on every single request. If this is the only MCP server in a session,
+sixteen is fine. If it is one of six, it is not.
+
+**The syntax.** Comma-separated entries. An entry is either an exact tool name or
+a prefix with a trailing `*` — `list_*` matches every tool whose name starts with
+`list_`. Entries are trimmed and case-insensitive, empty ones are ignored, and an
+empty value counts as unset. Nothing else is a pattern: `*_x` and `list_*_x` are
+rejected rather than silently matching nothing.
+
+**`essential`** is a curated preset of seven:
+
+`list_feeds`, `list_categories`, `get_unread_counts`, `list_articles`, `get_articles`, `mark_articles`, `mark_all_as_read`.
+
+It composes — naming a tool alongside it puts that one back, and
+`FRESHRSS_DENY_TOOLS` takes one away.
+
+**Both together.** `FRESHRSS_ALLOW_TOOLS` decides what is in;
+`FRESHRSS_DENY_TOOLS` is then subtracted from the result. With only a deny list,
+everything else stays.
+
+**A name that matches nothing stops the server**, with the offending entry and the
+list of real names. That is deliberate: the alternative is a tool quietly missing
+from `tools/list`, and nobody traces an absence back to an environment variable.
+The same applies to a pattern that matches no tool.
+
+**With read-only mode**, the write tools are not registered at all, so naming
+one explicitly in `FRESHRSS_ALLOW_TOOLS` is an error that says so — rather than
+calling a tool unknown when it plainly exists. A _pattern_ that covers write
+tools is fine and simply contributes nothing, and
+`FRESHRSS_ALLOW_TOOLS=essential` narrows to the read half of the preset.
+
+::: tip It is the same cut, not a second one
+A filtered tool is never registered, so it is absent from `tools/list` and
+unknown to `tools/call` alike — exactly what `FRESHRSS_READ_ONLY` does to a
+write tool. There is no "hidden but callable" state to reason about.
+:::

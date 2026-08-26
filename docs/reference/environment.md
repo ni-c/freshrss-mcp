@@ -63,3 +63,28 @@ Not configurable, but they bound every response:
 The OPML import limit sits below the 1 048 576 bytes FreshRSS reads from
 `php://input` — beyond that it truncates silently, which would arrive as malformed
 XML.
+
+## Narrowing the tool list
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `FRESHRSS_ALLOW_TOOLS` | no | Tool names, `list_*` prefixes or `essential`; only these register |
+| `FRESHRSS_DENY_TOOLS` | no | Same syntax; subtracted from whatever the allow list left |
+
+Both are comma-separated. Each entry is either an exact tool name or a prefix with
+a single trailing `*`. Entries are trimmed and matched case-insensitively; empty
+entries are ignored, and a value that is empty or only whitespace counts as unset —
+`FRESHRSS_ALLOW_TOOLS=` in a compose file does not mean "allow nothing".
+`essential` is recognised only in the allow list, and selects `list_feeds`, `list_categories`, `get_unread_counts`, `list_articles`, `get_articles`, `mark_articles`, `mark_all_as_read`.
+
+**An entry that matches no tool aborts startup**, naming the entry and listing the
+valid names, as does a malformed pattern such as `*_x` or `list_*_x`. The
+alternative — ignoring the entry — leaves a tool missing from `tools/list` with
+nothing pointing at the cause. If both lists together remove everything, the server
+refuses to start rather than offering an empty tool list.
+
+Under `FRESHRSS_READ_ONLY`, an exact write-tool name in the allow list is an
+error naming the read-only setting rather than "unknown tool"; a pattern covering
+write tools is accepted and merely contributes nothing, with a warning on stderr.
+Deny entries are exempt: denying an already-suppressed tool is how a defensive
+list is written.
