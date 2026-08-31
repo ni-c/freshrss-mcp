@@ -6,11 +6,8 @@
  * preference being violated. The audit note is quoted in each case.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
+import type { CallToolResult } from '@modelcontextprotocol/client';
 import { loadConfig } from '../src/config.js';
 import { ConfirmationStore } from '../src/confirm.js';
 import { redactOpmlCredentials, redactUrlCredentials } from '../src/redact.js';

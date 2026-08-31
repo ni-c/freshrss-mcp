@@ -1,14 +1,10 @@
 import { z } from 'zod';
-
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-
-import { expectOk, type FreshRssApi } from '../api.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import {
   confirmationPrompt,
   setResourceKey,
   type ConfirmationStore,
 } from '../confirm.js';
-import { errorResult, jsonResult, run, textResult } from '../result.js';
 import {
   Notes,
   shapeEntry,
@@ -25,6 +21,9 @@ import {
   toUnixSeconds,
   type StreamSelector,
 } from '../streams.js';
+
+import { expectOk, type FreshRssApi } from '../api.js';
+import { errorResult, jsonResult, run, textResult } from '../result.js';
 
 /** Articles per call. FreshRSS itself defaults to 20 and has no upper bound. */
 const DEFAULT_LIMIT = 20;
@@ -174,7 +173,7 @@ export function registerArticleReadTools(
         'FreshRSS has no full-text search over its API, so there is no way to query by ' +
         'keyword — narrow the result with feed_id/category and since/until instead and ' +
         'filter the returned articles yourself.',
-      inputSchema: {
+      inputSchema: z.object({
         ...listingSchema,
         include_content: z
           .boolean()
@@ -189,7 +188,7 @@ export function registerArticleReadTools(
           .describe(
             `Characters of article text per article, default ${DEFAULT_MAX_CONTENT_CHARS}`
           ),
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async (args) =>
@@ -228,7 +227,7 @@ export function registerArticleReadTools(
       description:
         'Fetches the full text of specific articles by id, as plain text. ' +
         `At most ${MAX_GET_ARTICLES} ids per call.`,
-      inputSchema: {
+      inputSchema: z.object({
         article_ids: z
           .array(z.string())
           .min(1)
@@ -243,7 +242,7 @@ export function registerArticleReadTools(
           .describe(
             `Characters of article text per article, default ${DEFAULT_MAX_CONTENT_CHARS}`
           ),
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     async ({ article_ids, max_content_chars }) =>
@@ -280,7 +279,7 @@ export function registerArticleReadTools(
       description:
         'Lists only the ids of matching articles — the cheap way to collect a set for ' +
         'mark_articles. Same selectors and filters as list_articles.',
-      inputSchema: listingSchema,
+      inputSchema: z.object(listingSchema),
       annotations: { readOnlyHint: true },
     },
     async (args) =>
@@ -319,7 +318,7 @@ export function registerArticleWriteTools(
         'All changes are reversible by calling this tool again with the opposite value. ' +
         `At most ${MAX_EDIT_ARTICLES} articles per call; every given change is applied to ` +
         'all of them.',
-      inputSchema: {
+      inputSchema: z.object({
         article_ids: z
           .array(z.string())
           .min(1)
@@ -341,7 +340,7 @@ export function registerArticleWriteTools(
           .array(z.string())
           .optional()
           .describe('User labels to detach'),
-      },
+      }),
       // Deliberately not confirmation-gated, unlike mark_all_as_read: the caller
       // names every article explicitly and at most 100 of them, and each field
       // can be set back. What is *not* recoverable is the per-article prior
@@ -392,7 +391,7 @@ export function registerArticleWriteTools(
         'Two-step: the first call returns a confirmation token, the second call with that ' +
         'token performs the change. Which articles were unread before cannot be recovered ' +
         'afterwards.',
-      inputSchema: {
+      inputSchema: z.object({
         ...selectorSchema,
         older_than: z
           .string()
@@ -404,7 +403,7 @@ export function registerArticleWriteTools(
           .string()
           .optional()
           .describe('Token from the first call of this tool'),
-      },
+      }),
       annotations: { destructiveHint: true },
     },
     async (args) =>

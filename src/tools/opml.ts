@@ -1,13 +1,12 @@
 import { z } from 'zod';
-
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-
-import { SLOW_REQUEST_TIMEOUT_MS, type FreshRssApi } from '../api.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import {
   confirmationPrompt,
   setResourceKey,
   type ConfirmationStore,
 } from '../confirm.js';
+
+import { SLOW_REQUEST_TIMEOUT_MS, type FreshRssApi } from '../api.js';
 import { assertRoutableHosts } from '../hosts.js';
 import { redactOpmlCredentials, redactUrlCredentials } from '../redact.js';
 import { errorResult, run, textResult, ToolInputError } from '../result.js';
@@ -34,7 +33,7 @@ export function registerOpmlReadTools(
       description:
         'Exports all subscriptions as an OPML document — the portable backup format for ' +
         'feed readers. For a readable overview of the subscriptions use list_feeds instead.',
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
     async () =>
@@ -388,13 +387,13 @@ export function registerOpmlWriteTools(
         'no bulk undo; every feed would have to be removed individually. Two-step: the ' +
         'first call returns a confirmation token, the second call with that token performs ' +
         'the import.',
-      inputSchema: {
+      inputSchema: z.object({
         opml: z.string().min(1).describe('OPML document'),
         confirm_token: z
           .string()
           .optional()
           .describe('Token from the first call of this tool'),
-      },
+      }),
       annotations: { destructiveHint: true },
     },
     async ({ opml, confirm_token }) =>

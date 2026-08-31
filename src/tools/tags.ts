@@ -1,21 +1,21 @@
 import { z } from 'zod';
-
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-
-import { expectOk, type FreshRssApi } from '../api.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import {
   confirmationPrompt,
   setResourceKey,
   type ConfirmationStore,
 } from '../confirm.js';
-import { errorResult, jsonResult, run, textResult } from '../result.js';
 import {
   labelFromStreamId,
   unreadCountIndex,
   UNTRUSTED_CONTENT_NOTE,
   type RawTag,
 } from '../shape.js';
+
+import { expectOk, type FreshRssApi } from '../api.js';
+import { errorResult, jsonResult, run, textResult } from '../result.js';
 import { assertTagName, SPECIAL_STREAMS } from '../streams.js';
+
 // The unread-count endpoint is shared with the feed tools, which own it.
 import {
   loadUnreadCountsOptional,
@@ -34,7 +34,7 @@ export function registerTagReadTools(
         'Lists the categories (folders that hold feeds) and the user labels (tags that ' +
         'are attached to individual articles), each with its unread count. Both are ' +
         'addressed by name in the other tools.',
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
     async () =>
@@ -85,12 +85,12 @@ export function registerTagWriteTools(
         'Renames a category (folder) or a user label. FreshRSS resolves the name against ' +
         'its categories first and falls back to labels, so one tool covers both. Feeds and ' +
         'articles keep their assignment.',
-      inputSchema: {
+      inputSchema: z.object({
         name: z
           .string()
           .describe('Current name, exactly as in list_categories'),
         new_name: z.string().describe('New name'),
-      },
+      }),
     },
     async ({ name, new_name }) =>
       run(async () => {
@@ -118,13 +118,13 @@ export function registerTagWriteTools(
         'first, so a category and a label of the same name cannot be told apart here. ' +
         'Two-step: the first call returns a confirmation token, the second call with that ' +
         'token performs the deletion.',
-      inputSchema: {
+      inputSchema: z.object({
         name: z.string().describe('Name, exactly as in list_categories'),
         confirm_token: z
           .string()
           .optional()
           .describe('Token from the first call of this tool'),
-      },
+      }),
       annotations: { destructiveHint: true },
     },
     async ({ name, confirm_token }) =>

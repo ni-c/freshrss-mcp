@@ -1,15 +1,10 @@
 import { z } from 'zod';
-
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-
-import { expectOk, SLOW_REQUEST_TIMEOUT_MS, type FreshRssApi } from '../api.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import {
   confirmationPrompt,
   setResourceKey,
   type ConfirmationStore,
 } from '../confirm.js';
-import { assertRoutableHosts } from '../hosts.js';
-import { redactUrlCredentials } from '../redact.js';
 import {
   errorResult,
   jsonResult,
@@ -26,6 +21,10 @@ import {
   type RawSubscription,
   type RawUnreadCount,
 } from '../shape.js';
+
+import { expectOk, SLOW_REQUEST_TIMEOUT_MS, type FreshRssApi } from '../api.js';
+import { assertRoutableHosts } from '../hosts.js';
+import { redactUrlCredentials } from '../redact.js';
 import { assertFeedId, assertTagName } from '../streams.js';
 
 interface SubscriptionListResponse {
@@ -76,7 +75,7 @@ export function registerFeedReadTools(
       description:
         'Returns the FreshRSS account the server is authenticated as. Useful as a ' +
         'connection and credential check before anything else.',
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
     async () =>
@@ -102,7 +101,7 @@ export function registerFeedReadTools(
         'Lists every subscribed feed with its category and unread count. The numeric ' +
         'feedId is what all other tools take as feed_id. Start here to find out what is ' +
         'subscribed before listing articles.',
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
     async () =>
@@ -136,7 +135,7 @@ export function registerFeedReadTools(
       description:
         'Returns how many unread articles are waiting, in total and per feed and ' +
         'category, sorted by count. Only entries with unread articles are listed.',
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
     async () =>
@@ -203,7 +202,7 @@ export function registerFeedWriteTools(
         'Subscribes to a feed. The URL may point at the feed itself or at a website — ' +
         'FreshRSS discovers the feed and then downloads it, so this call can take a while. ' +
         'A category that does not exist yet is created.',
-      inputSchema: {
+      inputSchema: z.object({
         url: z.string().describe('Feed URL or website URL (http/https)'),
         title: z
           .string()
@@ -213,7 +212,7 @@ export function registerFeedWriteTools(
           .string()
           .optional()
           .describe('Category to file the feed under; created if unknown'),
-      },
+      }),
       // Stated rather than left to the default: this writes, but it only adds a
       // subscription, so it is not destructive. It is also not idempotent —
       // FreshRSS creates a second subscription for the same URL.
@@ -263,7 +262,7 @@ export function registerFeedWriteTools(
       description:
         'Renames a feed and/or moves it to another category. A category that does not ' +
         'exist yet is created. Fields that are not given stay unchanged.',
-      inputSchema: {
+      inputSchema: z.object({
         feed_id: z
           .number()
           .int()
@@ -274,7 +273,7 @@ export function registerFeedWriteTools(
           .string()
           .optional()
           .describe('Category to move the feed to'),
-      },
+      }),
       // Overwrites the title and category, but nothing is deleted and applying
       // the same call twice leaves the same state.
       annotations: { destructiveHint: false, idempotentHint: true },
@@ -300,7 +299,7 @@ export function registerFeedWriteTools(
         'Two-step: the first call returns a confirmation token, the second call with that ' +
         'token performs the deletion. This cannot be undone — re-subscribing starts from ' +
         'whatever the feed currently offers.',
-      inputSchema: {
+      inputSchema: z.object({
         feed_id: z
           .number()
           .int()
@@ -310,7 +309,7 @@ export function registerFeedWriteTools(
           .string()
           .optional()
           .describe('Token from the first call of this tool'),
-      },
+      }),
       annotations: { destructiveHint: true },
     },
     async ({ feed_id, confirm_token }) =>

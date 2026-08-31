@@ -1,11 +1,5 @@
 import { createRequire } from 'node:module';
-
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-
-import { FreshRssApi } from './api.js';
-import { buildToolFilter, installToolFilter } from './tool-filter.js';
-import type { Config } from './config.js';
-import { ConfirmationStore } from './confirm.js';
+import { McpServer } from '@modelcontextprotocol/server';
 import {
   registerArticleReadTools,
   registerArticleWriteTools,
@@ -14,6 +8,11 @@ import {
   registerFeedReadTools,
   registerFeedWriteTools,
 } from './tools/feeds.js';
+
+import { FreshRssApi } from './api.js';
+import { buildToolFilter, installToolFilter } from './tool-filter.js';
+import type { Config } from './config.js';
+import { ConfirmationStore } from './confirm.js';
 import { registerOpmlReadTools, registerOpmlWriteTools } from './tools/opml.js';
 import { registerTagReadTools, registerTagWriteTools } from './tools/tags.js';
 
