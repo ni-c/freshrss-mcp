@@ -28,16 +28,43 @@ const WRITE_TOOLS = [
   'import_opml',
 ];
 
-async function connect(overrides: Partial<Config> = {}): Promise<Client> {
+/** How a client that can show a dialog answers it. */
+type ElicitBehaviour = 'accept' | 'decline' | 'cancel';
+
+/**
+ * Connects a client to the real server.
+ *
+ * Without `elicit` the client declares no elicitation capability, which is the
+ * case the two-call token exists for and what every other test here drives.
+ * With it, the client answers the dialog and `prompts` records what the server
+ * put in front of the user.
+ */
+async function connect(
+  overrides: Partial<Config> = {},
+  elicit?: ElicitBehaviour
+): Promise<Client & { prompts: string[] }> {
   const server = createServer({ ...testConfig, ...overrides });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: 'test', version: '0.0.0' });
+  const prompts: string[] = [];
+  const client = new Client(
+    { name: 'test', version: '0.0.0' },
+    elicit === undefined ? {} : { capabilities: { elicitation: {} } }
+  );
+  if (elicit !== undefined) {
+    client.setRequestHandler('elicitation/create', (request) => {
+      const params = request.params as { message?: string };
+      prompts.push(params.message ?? '');
+      if (elicit === 'cancel') return { action: 'cancel' };
+      if (elicit === 'decline') return { action: 'decline' };
+      return { action: 'accept', content: { confirm: true } };
+    });
+  }
   await Promise.all([
     client.connect(clientTransport),
     server.connect(serverTransport),
   ]);
-  return client;
+  return Object.assign(client, { prompts });
 }
 
 function textOf(result: CallToolResult): string {
@@ -588,5 +615,119 @@ describe('error handling', () => {
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/malformed stream id/);
     expect(textOf(result)).toMatch(/returns an empty list instead/);
+  });
+});
+
+/**
+ * The point of the approval path: a client that can put a question in front of a
+ * person gets asked, instead of a token that only proves the same call was made
+ * twice. Every other test in this file drives the token path, and would pass just
+ * as well against a server that silently never asks — so the control below ("a
+ * capable client is not offered a token") is the one that has to fail if the
+ * wiring is undone.
+ */
+describe('approval through the client', () => {
+  const GUARDED: [string, Record<string, unknown>, Routes][] = [
+    ['unsubscribe_feed', { feed_id: 12 }, { '/subscription/edit': 'OK' }],
+    ['mark_all_as_read', { feed_id: 12 }, { '/mark-all-as-read': 'OK' }],
+    ['delete_category_or_label', { name: 'Tech' }, { '/disable-tag': 'OK' }],
+    [
+      'import_opml',
+      {
+        // A literal, so the guard decides it without asking a resolver: a unit
+        // test must not depend on what this machine's DNS answers.
+        opml: '<opml><body><outline xmlUrl="https://93.184.216.34/rss"/></body></opml>',
+      },
+      { '/subscription/import': 'OK' },
+    ],
+  ];
+
+  it.each(GUARDED)(
+    '%s asks the user, and goes ahead once they accept',
+    async (name, args, routes) => {
+      const stub = stubFreshRss(routes);
+      const client = await connect({}, 'accept');
+      const result = (await client.callTool({
+        name,
+        arguments: args,
+      })) as CallToolResult;
+      expect(client.prompts).toHaveLength(1);
+      expect(result.isError).toBeFalsy();
+      expect(stub.calls.length).toBeGreaterThan(0);
+    }
+  );
+
+  it.each(GUARDED)(
+    '%s does nothing when declined',
+    async (name, args, routes) => {
+      const stub = stubFreshRss(routes);
+      const client = await connect({}, 'decline');
+      const result = (await client.callTool({
+        name,
+        arguments: args,
+      })) as CallToolResult;
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toMatch(/declined/);
+      expect(stub.calls).toHaveLength(0);
+    }
+  );
+
+  it.each(GUARDED)(
+    '%s does nothing when the dialog is cancelled',
+    async (name, args, routes) => {
+      const stub = stubFreshRss(routes);
+      const client = await connect({}, 'cancel');
+      const result = (await client.callTool({
+        name,
+        arguments: args,
+      })) as CallToolResult;
+      expect(result.isError).toBe(true);
+      expect(stub.calls).toHaveLength(0);
+    }
+  );
+
+  it.each(GUARDED)(
+    '%s refuses a token it never issued',
+    async (name, args, routes) => {
+      const stub = stubFreshRss(routes);
+      const client = await connect();
+      const result = (await client.callTool({
+        name,
+        arguments: {
+          ...args,
+          confirm_token: 'deadbeefdeadbeefdeadbeefdeadbeef',
+        },
+      })) as CallToolResult;
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toMatch(/invalid, expired/);
+      expect(stub.calls).toHaveLength(0);
+    }
+  );
+
+  it('does not offer a token to a client that can be asked', async () => {
+    // The control. Restore the token-only branch and this is the test that
+    // fails: the others would still pass, because accepting a dialog and
+    // quoting a token back are indistinguishable from the outside.
+    stubFreshRss({ '/subscription/edit': 'OK' });
+    const client = await connect({}, 'accept');
+    const result = (await client.callTool({
+      name: 'unsubscribe_feed',
+      arguments: { feed_id: 12 },
+    })) as CallToolResult;
+    expect(textOf(result)).not.toMatch(CONFIRM_TOKEN_RE);
+    expect(client.prompts[0]).toContain('every article FreshRSS stored');
+  });
+
+  it('still hands a token to a client that cannot ask anyone', async () => {
+    // The fallback is not a leftover: it is the only gate a client without
+    // elicitation has, and it must keep working unchanged.
+    const stub = stubFreshRss({ '/subscription/edit': 'OK' });
+    const client = await connect();
+    const result = (await client.callTool({
+      name: 'unsubscribe_feed',
+      arguments: { feed_id: 12 },
+    })) as CallToolResult;
+    expect(textOf(result)).toMatch(CONFIRM_TOKEN_RE);
+    expect(stub.calls).toHaveLength(0);
   });
 });

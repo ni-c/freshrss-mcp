@@ -9,7 +9,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { CallToolResult } from '@modelcontextprotocol/client';
 import { loadConfig } from '../src/config.js';
-import { ConfirmationStore } from '../src/confirm.js';
 import { redactOpmlCredentials, redactUrlCredentials } from '../src/redact.js';
 import { jsonResult } from '../src/result.js';
 import {
@@ -713,26 +712,6 @@ describe('article text sanitising', () => {
     );
     expect(second.excerpt).toBeUndefined();
     expect(second.contentOmitted).toBe('budget');
-  });
-});
-
-describe('confirmation tokens', () => {
-  it('purges an expired token instead of leaving it in the map', () => {
-    const store = new ConfirmationStore(1);
-    const token = store.issue('op:x');
-    vi.useFakeTimers();
-    vi.advanceTimersByTime(10);
-    expect(store.consume('op:x', token)).toBe(false);
-    // Purged, so even a clock that moves back cannot revive it.
-    vi.useRealTimers();
-    expect(store.consume('op:x', token)).toBe(false);
-  });
-
-  it('rejects a token of a different length without throwing', () => {
-    const store = new ConfirmationStore();
-    store.issue('op:x');
-    expect(store.consume('op:x', 'short')).toBe(false);
-    expect(store.consume('op:x', 'f'.repeat(200))).toBe(false);
   });
 });
 

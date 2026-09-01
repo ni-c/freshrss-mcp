@@ -1,10 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import {
-  confirmationPrompt,
-  setResourceKey,
-  type ConfirmationStore,
-} from '../confirm.js';
+import { setResourceKey } from 'mcp-approval';
+import type { Approver, ConfirmationStore } from 'mcp-approval';
 
 import { SLOW_REQUEST_TIMEOUT_MS, type FreshRssApi } from '../api.js';
 import { assertRoutableHosts } from '../hosts.js';
@@ -375,7 +372,8 @@ function describeHosts(hosts: string[]): string {
 export function registerOpmlWriteTools(
   server: McpServer,
   api: FreshRssApi,
-  confirmations: ConfirmationStore
+  confirmations: ConfirmationStore,
+  approval: Approver
 ): void {
   server.registerTool(
     'import_opml',
@@ -396,7 +394,7 @@ export function registerOpmlWriteTools(
       }),
       annotations: { destructiveHint: true },
     },
-    async ({ opml, confirm_token }) =>
+    async ({ opml, confirm_token }, mcp) =>
       run(async () => {
         if (opml.length > MAX_IMPORT_CHARS) {
           throw new ToolInputError(
@@ -415,23 +413,34 @@ export function registerOpmlWriteTools(
         // not authorise importing a different, larger one.
         const resource = setResourceKey('import_opml', [opml]);
 
-        if (!confirmations.consume(resource, confirm_token)) {
-          if (confirm_token !== undefined) {
-            return errorResult(
-              'The confirmation token is invalid, expired or was issued for a different ' +
-                'document. Call import_opml without a token to get a new one.'
-            );
+        const outlines = (document.match(/<outline\b/gi) ?? []).length;
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what:
+              `import an OPML document with ${outlines} outline element(s), ` +
+              `subscribing to ${describeHosts(hosts)} and refreshing all feeds afterwards`,
+            consequence:
+              'Every feed in the document is subscribed to at once, and FreshRSS ' +
+              'fetches each of them. Unsubscribing afterwards is one call per feed.',
+            resourceKey: resource,
+            token: confirm_token,
+            toolName: 'import_opml',
+            hint: 'Tick to go ahead, leave it to cancel.',
           }
-          const outlines = (document.match(/<outline\b/gi) ?? []).length;
-          return textResult(
-            confirmationPrompt(
-              `import an OPML document with ${outlines} outline element(s), subscribing to ` +
-                `${describeHosts(hosts)} and refreshing all feeds afterwards`,
-              confirmations.issue(resource),
-              confirmations.ttlMinutes
-            )
-          );
+        );
+        // A token that was sent and did not match is refused with the reason
+        // rather than answered with a fresh prompt; the sentence is the
+        // library's, so every server refuses in the same words.
+        if (outcome.decision === 'rejected') {
+          return errorResult(outcome.reason);
         }
+        if (outcome.decision === 'declined') {
+          return errorResult(`The user declined. import_opml did nothing.`);
+        }
+        if (outcome.decision === 'pending') return outcome.result;
 
         // The checked document, not the one that came in: the two differ exactly
         // where a URL parser and FreshRSS's fetcher would have disagreed.

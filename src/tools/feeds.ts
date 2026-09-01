@@ -1,10 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import {
-  confirmationPrompt,
-  setResourceKey,
-  type ConfirmationStore,
-} from '../confirm.js';
+import { setResourceKey } from 'mcp-approval';
+import type { Approver, ConfirmationStore } from 'mcp-approval';
 import {
   errorResult,
   jsonResult,
@@ -192,7 +189,8 @@ export function registerFeedReadTools(
 export function registerFeedWriteTools(
   server: McpServer,
   api: FreshRssApi,
-  confirmations: ConfirmationStore
+  confirmations: ConfirmationStore,
+  approval: Approver
 ): void {
   server.registerTool(
     'subscribe_feed',
@@ -312,28 +310,40 @@ export function registerFeedWriteTools(
       }),
       annotations: { destructiveHint: true },
     },
-    async ({ feed_id, confirm_token }) =>
+    async ({ feed_id, confirm_token }, mcp) =>
       run(async () => {
         const feedId = assertFeedId(feed_id);
         const resource = setResourceKey('unsubscribe_feed', [String(feedId)]);
 
-        if (!confirmations.consume(resource, confirm_token)) {
-          if (confirm_token !== undefined) {
-            return errorResult(
-              'The confirmation token is invalid, expired or was issued for a different ' +
-                'feed. Call unsubscribe_feed without a token to get a new one.'
-            );
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            // Deliberately only the id in this text — never the feed title,
+            // which comes from a third-party website.
+            what: `delete feed ${feedId} and all of its stored articles`,
+            consequence:
+              'The subscription and every article FreshRSS stored for it are ' +
+              'gone. Subscribing again fetches only what the feed still offers.',
+            resourceKey: resource,
+            token: confirm_token,
+            toolName: 'unsubscribe_feed',
+            hint: 'Tick to go ahead, leave it to cancel.',
           }
-          // Deliberately only the id in this text — never the feed title, which
-          // comes from a third-party website.
-          return textResult(
-            confirmationPrompt(
-              `delete feed ${feedId} and all of its stored articles`,
-              confirmations.issue(resource),
-              confirmations.ttlMinutes
-            )
+        );
+        // A token that was sent and did not match is refused with the reason
+        // rather than answered with a fresh prompt; the sentence is the
+        // library's, so every server refuses in the same words.
+        if (outcome.decision === 'rejected') {
+          return errorResult(outcome.reason);
+        }
+        if (outcome.decision === 'declined') {
+          return errorResult(
+            `The user declined. unsubscribe_feed did nothing.`
           );
         }
+        if (outcome.decision === 'pending') return outcome.result;
 
         const form = new URLSearchParams({
           ac: 'unsubscribe',

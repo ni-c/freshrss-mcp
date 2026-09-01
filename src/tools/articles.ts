@@ -1,10 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import {
-  confirmationPrompt,
-  setResourceKey,
-  type ConfirmationStore,
-} from '../confirm.js';
+import { setResourceKey } from 'mcp-approval';
+import type { Approver, ConfirmationStore } from 'mcp-approval';
 import {
   Notes,
   shapeEntry,
@@ -307,7 +304,8 @@ export function registerArticleReadTools(
 export function registerArticleWriteTools(
   server: McpServer,
   api: FreshRssApi,
-  confirmations: ConfirmationStore
+  confirmations: ConfirmationStore,
+  approval: Approver
 ): void {
   server.registerTool(
     'mark_articles',
@@ -406,7 +404,7 @@ export function registerArticleWriteTools(
       }),
       annotations: { destructiveHint: true },
     },
-    async (args) =>
+    async (args, mcp) =>
       run(async () => {
         const { streamId, description } = resolveStream(selectorOf(args));
         const olderThan =
@@ -418,24 +416,35 @@ export function registerArticleWriteTools(
           olderThan,
         ]);
 
-        if (!confirmations.consume(resource, args.confirm_token)) {
-          if (args.confirm_token !== undefined) {
-            return errorResult(
-              'The confirmation token is invalid, expired or was issued for a different ' +
-                'selection. Call mark_all_as_read without a token to get a new one.'
-            );
-          }
-          return textResult(
-            confirmationPrompt(
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what:
               `mark every article in ${description} as read` +
-                (args.older_than === undefined
-                  ? ''
-                  : ' that is older than the given date'),
-              confirmations.issue(resource),
-              confirmations.ttlMinutes
-            )
-          );
+              (args.older_than === undefined
+                ? ''
+                : ' that is older than the given date'),
+            consequence:
+              'FreshRSS keeps no record of which articles were unread, so this ' +
+              'cannot be undone for the selection as a whole.',
+            resourceKey: resource,
+            token: args.confirm_token,
+            toolName: 'mark_all_as_read',
+            hint: 'Tick to mark them read, leave it to cancel.',
+          }
+        );
+        // A token that was sent and did not match is refused with the reason
+        // rather than answered with a fresh prompt; the sentence is the
+        // library's, so every server refuses in the same words.
+        if (outcome.decision === 'rejected') {
+          return errorResult(outcome.reason);
         }
+        if (outcome.decision === 'declined') {
+          return errorResult('The user declined. Nothing was marked as read.');
+        }
+        if (outcome.decision === 'pending') return outcome.result;
 
         // `ts` is documented as nanoseconds but is compared against the entry id,
         // and FreshRSS entry ids are microsecond timestamps — see

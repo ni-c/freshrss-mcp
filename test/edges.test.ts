@@ -3,7 +3,6 @@ import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { CallToolResult } from '@modelcontextprotocol/client';
 
 import { expectOk } from '../src/api.js';
-import { ConfirmationStore, setResourceKey } from '../src/confirm.js';
 import { jsonResult, textResult } from '../src/result.js';
 import { createServer } from '../src/server.js';
 import { rawEntry, stubFreshRss, testConfig } from './helpers.js';
@@ -61,21 +60,6 @@ describe('expectOk', () => {
 
   it('rejects anything else and quotes a bounded part of it', () => {
     expect(() => expectOk('x'.repeat(500), 'the change')).toThrow(/…/);
-  });
-});
-
-describe('ConfirmationStore', () => {
-  it('bounds the number of pending tokens', () => {
-    const store = new ConfirmationStore();
-    const first = setResourceKey('op', ['0']);
-    const firstToken = store.issue(first);
-    for (let i = 1; i <= 100; i++) store.issue(setResourceKey('op', [`${i}`]));
-    // The oldest entries are evicted, so a refused-call loop cannot grow the map.
-    expect(store.consume(first, firstToken)).toBe(false);
-  });
-
-  it('reports the lifetime in minutes for the prompt text', () => {
-    expect(new ConfirmationStore(5 * 60_000).ttlMinutes).toBe(5);
   });
 });
 

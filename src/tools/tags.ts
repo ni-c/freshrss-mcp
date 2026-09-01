@@ -1,10 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import {
-  confirmationPrompt,
-  setResourceKey,
-  type ConfirmationStore,
-} from '../confirm.js';
+import { setResourceKey } from 'mcp-approval';
+import type { Approver, ConfirmationStore } from 'mcp-approval';
 import {
   labelFromStreamId,
   unreadCountIndex,
@@ -75,7 +72,8 @@ export function registerTagReadTools(
 export function registerTagWriteTools(
   server: McpServer,
   api: FreshRssApi,
-  confirmations: ConfirmationStore
+  confirmations: ConfirmationStore,
+  approval: Approver
 ): void {
   server.registerTool(
     'rename_category_or_label',
@@ -127,27 +125,39 @@ export function registerTagWriteTools(
       }),
       annotations: { destructiveHint: true },
     },
-    async ({ name, confirm_token }) =>
+    async ({ name, confirm_token }, mcp) =>
       run(async () => {
         const target = assertTagName(name, 'category or label');
         const resource = setResourceKey('delete_category_or_label', [target]);
 
-        if (!confirmations.consume(resource, confirm_token)) {
-          if (confirm_token !== undefined) {
-            return errorResult(
-              'The confirmation token is invalid, expired or was issued for a different ' +
-                'name. Call delete_category_or_label without a token to get a new one.'
-            );
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what: 'delete the given category or label',
+            consequence:
+              'If it is a category its feeds move to the default category; if it ' +
+              'is a label it is removed from every article. Neither can be undone ' +
+              'from here.',
+            resourceKey: resource,
+            token: confirm_token,
+            toolName: 'delete_category_or_label',
+            hint: 'Tick to go ahead, leave it to cancel.',
           }
-          return textResult(
-            confirmationPrompt(
-              'delete the given category or label — if it is a category its feeds move ' +
-                'to the default category, if it is a label it is removed from every article',
-              confirmations.issue(resource),
-              confirmations.ttlMinutes
-            )
+        );
+        // A token that was sent and did not match is refused with the reason
+        // rather than answered with a fresh prompt; the sentence is the
+        // library's, so every server refuses in the same words.
+        if (outcome.decision === 'rejected') {
+          return errorResult(outcome.reason);
+        }
+        if (outcome.decision === 'declined') {
+          return errorResult(
+            `The user declined. delete_category_or_label did nothing.`
           );
         }
+        if (outcome.decision === 'pending') return outcome.result;
 
         const form = new URLSearchParams({ s: `user/-/label/${target}` });
         expectOk(await api.postForm('/disable-tag', form), 'the deletion');

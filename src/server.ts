@@ -14,7 +14,7 @@ import {
 
 import { FreshRssApi } from './api.js';
 import type { Config } from './config.js';
-import { ConfirmationStore } from './confirm.js';
+import { ConfirmationStore, createApproval } from 'mcp-approval';
 import { registerOpmlReadTools, registerOpmlWriteTools } from './tools/opml.js';
 import { registerTagReadTools, registerTagWriteTools } from './tools/tags.js';
 
@@ -53,6 +53,9 @@ export function createServer(config: Config): McpServer {
 
   const api = new FreshRssApi(config);
   const confirmations = new ConfirmationStore();
+  // One approver per server: it holds the key that seals the request state
+  // carried out through the client and back.
+  const approval = createApproval({ server: 'freshrss-mcp' });
 
   const server = new McpServer({
     name: 'freshrss-mcp',
@@ -71,10 +74,10 @@ export function createServer(config: Config): McpServer {
   // Read-only mode does not register the write tools at all. Rejecting them at
   // call time would still advertise capabilities the server refuses to provide.
   if (!config.readOnly) {
-    registerFeedWriteTools(server, api, confirmations);
-    registerArticleWriteTools(server, api, confirmations);
-    registerTagWriteTools(server, api, confirmations);
-    registerOpmlWriteTools(server, api, confirmations);
+    registerFeedWriteTools(server, api, confirmations, approval);
+    registerArticleWriteTools(server, api, confirmations, approval);
+    registerTagWriteTools(server, api, confirmations, approval);
+    registerOpmlWriteTools(server, api, confirmations, approval);
   }
 
   return server;
