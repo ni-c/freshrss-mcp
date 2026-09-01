@@ -1,4 +1,4 @@
-import { internalHostKind } from './hosts.js';
+import { internalHostKind } from 'mcp-internal-hosts';
 import { redactUrlCredentials } from './redact.js';
 
 export interface Config {

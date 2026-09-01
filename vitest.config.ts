@@ -2,6 +2,12 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    // mcp-internal-hosts is transformed rather than taken as an external
+    // dependency, so that `vi.mock('node:dns/promises')` reaches the resolving
+    // it does on this server's behalf. Without it the guard tests would pass
+    // against a real resolver, which is to say against whatever the machine
+    // running them happens to answer.
+    server: { deps: { inline: ['mcp-internal-hosts'] } },
     coverage: {
       provider: 'v8',
       include: ['src/**'],
