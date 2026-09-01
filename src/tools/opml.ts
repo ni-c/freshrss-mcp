@@ -4,6 +4,7 @@ import { setResourceKey } from 'mcp-approval';
 import type { Approver, ConfirmationStore } from 'mcp-approval';
 
 import { SLOW_REQUEST_TIMEOUT_MS, type FreshRssApi } from '../api.js';
+import { READ_ONLY } from './annotations.js';
 import { assertRoutableHosts } from '../hosts.js';
 import { redactOpmlCredentials, redactUrlCredentials } from '../redact.js';
 import { errorResult, run, textResult, ToolInputError } from '../result.js';
@@ -31,7 +32,7 @@ export function registerOpmlReadTools(
         'Exports all subscriptions as an OPML document — the portable backup format for ' +
         'feed readers. For a readable overview of the subscriptions use list_feeds instead.',
       inputSchema: z.object({}),
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
     },
     async () =>
       run(async () => {
@@ -392,7 +393,15 @@ export function registerOpmlWriteTools(
           .optional()
           .describe('Token from the first call of this tool'),
       }),
-      annotations: { destructiveHint: true },
+      annotations: {
+        // Destructive: FreshRSS merges the document into the existing
+        // subscriptions and the result cannot be separated back out. Each
+        // import fetches every feed named in it.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async ({ opml, confirm_token }, mcp) =>
       run(async () => {

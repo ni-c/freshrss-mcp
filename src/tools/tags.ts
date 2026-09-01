@@ -10,6 +10,7 @@ import {
 } from '../shape.js';
 
 import { expectOk, type FreshRssApi } from '../api.js';
+import { READ_ONLY } from './annotations.js';
 import { errorResult, jsonResult, run, textResult } from '../result.js';
 import { assertTagName, SPECIAL_STREAMS } from '../streams.js';
 
@@ -32,7 +33,7 @@ export function registerTagReadTools(
         'are attached to individual articles), each with its unread count. Both are ' +
         'addressed by name in the other tools.',
       inputSchema: z.object({}),
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
     },
     async () =>
       run(async () => {
@@ -89,6 +90,15 @@ export function registerTagWriteTools(
           .describe('Current name, exactly as in list_categories'),
         new_name: z.string().describe('New name'),
       }),
+      annotations: {
+        // Replaces a name somebody chose, on every feed or article carrying
+        // it. Had no annotations at all, so it inherited the destructive
+        // default — which happens to be right, but was never a decision.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     async ({ name, new_name }) =>
       run(async () => {
@@ -123,7 +133,14 @@ export function registerTagWriteTools(
           .optional()
           .describe('Token from the first call of this tool'),
       }),
-      annotations: { destructiveHint: true },
+      annotations: {
+        // A category moves its feeds to the default; a label is removed from
+        // every article. Neither comes back.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     async ({ name, confirm_token }, mcp) =>
       run(async () => {

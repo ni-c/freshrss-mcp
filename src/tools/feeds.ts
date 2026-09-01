@@ -20,6 +20,7 @@ import {
 } from '../shape.js';
 
 import { expectOk, SLOW_REQUEST_TIMEOUT_MS, type FreshRssApi } from '../api.js';
+import { READ_ONLY } from './annotations.js';
 import { assertRoutableHosts } from '../hosts.js';
 import { redactUrlCredentials } from '../redact.js';
 import { assertFeedId, assertTagName } from '../streams.js';
@@ -73,7 +74,7 @@ export function registerFeedReadTools(
         'Returns the FreshRSS account the server is authenticated as. Useful as a ' +
         'connection and credential check before anything else.',
       inputSchema: z.object({}),
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
     },
     async () =>
       run(async () => {
@@ -99,7 +100,7 @@ export function registerFeedReadTools(
         'feedId is what all other tools take as feed_id. Start here to find out what is ' +
         'subscribed before listing articles.',
       inputSchema: z.object({}),
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
     },
     async () =>
       run(async () => {
@@ -133,7 +134,7 @@ export function registerFeedReadTools(
         'Returns how many unread articles are waiting, in total and per feed and ' +
         'category, sorted by count. Only entries with unread articles are listed.',
       inputSchema: z.object({}),
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
     },
     async () =>
       run(async () => {
@@ -214,7 +215,15 @@ export function registerFeedWriteTools(
       // Stated rather than left to the default: this writes, but it only adds a
       // subscription, so it is not destructive. It is also not idempotent —
       // FreshRSS creates a second subscription for the same URL.
-      annotations: { destructiveHint: false, idempotentHint: false },
+      annotations: {
+        // Additive. Open-world: FreshRSS fetches the URL the caller supplies,
+        // so the caller picks the address — the boundary the SSRF guard
+        // watches. Not idempotent: FreshRSS accepts the same feed twice.
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async ({ url, title, category }) =>
       run(async () => {
@@ -274,7 +283,13 @@ export function registerFeedWriteTools(
       }),
       // Overwrites the title and category, but nothing is deleted and applying
       // the same call twice leaves the same state.
-      annotations: { destructiveHint: false, idempotentHint: true },
+      annotations: {
+        // Replaces the title and category somebody chose.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     async ({ feed_id, title, category }) =>
       run(async () => {
@@ -308,7 +323,15 @@ export function registerFeedWriteTools(
           .optional()
           .describe('Token from the first call of this tool'),
       }),
-      annotations: { destructiveHint: true },
+      annotations: {
+        // Idempotent by the specification's wording — the second call fails,
+        // but the world is the same either way. Every stored article of the
+        // feed goes with it.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     async ({ feed_id, confirm_token }, mcp) =>
       run(async () => {

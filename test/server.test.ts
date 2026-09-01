@@ -116,6 +116,51 @@ describe('tool registration', () => {
     expect(names.sort()).toEqual([...READ_TOOLS].sort());
   });
 
+  it('declares all four annotation hints on every tool', async () => {
+    // Not a style rule. Two of the four default to a *stronger* claim than
+    // silence suggests: the specification gives destructiveHint and
+    // openWorldHint a default of true, so a tool that omits them announces
+    // itself as destructive and open-world.
+    const { tools } = await (await connect()).listTools();
+    const hints = [
+      'readOnlyHint',
+      'destructiveHint',
+      'idempotentHint',
+      'openWorldHint',
+    ] as const;
+    for (const tool of tools) {
+      for (const hint of hints) {
+        expect(typeof tool.annotations?.[hint], `${tool.name}.${hint}`).toBe(
+          'boolean'
+        );
+      }
+    }
+  });
+
+  it('calls marking articles read destructive, because FreshRSS forgets', async () => {
+    // A read state is a marker, and the family's rule says markers are not
+    // destructive. This is the exception and it is worth stating: FreshRSS
+    // keeps no record of which articles were unread, so marking a thousand of
+    // them cannot be undone as an operation. imap-mcp reaches the opposite
+    // answer for set_message_flags and is right to — IMAP flags come back off.
+    const { tools } = await (await connect()).listTools();
+    const byName = new Map(tools.map((t) => [t.name, t.annotations]));
+    expect(byName.get('mark_articles')?.destructiveHint).toBe(true);
+    expect(byName.get('mark_all_as_read')?.destructiveHint).toBe(true);
+  });
+
+  it('opens the world only where the caller names the address', async () => {
+    // subscribe_feed and import_opml hand FreshRSS a URL of the caller's
+    // choosing and have it fetch that. Everything else talks to the one
+    // configured instance.
+    const { tools } = await (await connect()).listTools();
+    for (const tool of tools) {
+      expect(tool.annotations?.openWorldHint, tool.name).toBe(
+        tool.name === 'subscribe_feed' || tool.name === 'import_opml'
+      );
+    }
+  });
+
   it('lists tools without credentials and explains the setup on a call', async () => {
     const spy = vi.spyOn(globalThis, 'fetch');
     const client = await connect({

@@ -20,6 +20,7 @@ import {
 } from '../streams.js';
 
 import { expectOk, type FreshRssApi } from '../api.js';
+import { READ_ONLY } from './annotations.js';
 import { errorResult, jsonResult, run, textResult } from '../result.js';
 
 /** Articles per call. FreshRSS itself defaults to 20 and has no upper bound. */
@@ -186,7 +187,7 @@ export function registerArticleReadTools(
             `Characters of article text per article, default ${DEFAULT_MAX_CONTENT_CHARS}`
           ),
       }),
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
     },
     async (args) =>
       run(async () => {
@@ -240,7 +241,7 @@ export function registerArticleReadTools(
             `Characters of article text per article, default ${DEFAULT_MAX_CONTENT_CHARS}`
           ),
       }),
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
     },
     async ({ article_ids, max_content_chars }) =>
       run(async () => {
@@ -277,7 +278,7 @@ export function registerArticleReadTools(
         'Lists only the ids of matching articles — the cheap way to collect a set for ' +
         'mark_articles. Same selectors and filters as list_articles.',
       inputSchema: z.object(listingSchema),
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
     },
     async (args) =>
       run(async () => {
@@ -343,7 +344,15 @@ export function registerArticleWriteTools(
       // names every article explicitly and at most 100 of them, and each field
       // can be set back. What is *not* recoverable is the per-article prior
       // state, so this is declared destructive and a client may prompt for it.
-      annotations: { destructiveHint: true, idempotentHint: true },
+      annotations: {
+        // Destructive despite being a marker: FreshRSS keeps no record of
+        // which articles were unread, so this cannot be undone as an
+        // operation. Idempotent — marking a read article read changes nothing.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     async ({ article_ids, read, starred, add_labels, remove_labels }) =>
       run(async () => {
@@ -402,7 +411,13 @@ export function registerArticleWriteTools(
           .optional()
           .describe('Token from the first call of this tool'),
       }),
-      annotations: { destructiveHint: true },
+      annotations: {
+        // The same, over a whole selection.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     async (args, mcp) =>
       run(async () => {
