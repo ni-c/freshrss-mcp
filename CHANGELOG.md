@@ -10,6 +10,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- #region changelog -->
 
+## [Unreleased]
+
+### Added
+
+- The four tools that need a confirmation now **ask the user**, on clients that
+  can show a prompt: `unsubscribe_feed`, `mark_all_as_read`,
+  `delete_category_or_label` and `import_opml`. The two-call `confirm_token`
+  remains for clients that cannot, so nothing that works today stops working —
+  but where a person can be asked, one is, instead of a token that only proves
+  the same call was made twice.
+
+- Each of those prompts now says what will be lost, which three of the four
+  never did: FreshRSS keeps no record of which articles were unread, a feed takes
+  its stored articles with it, and a deleted category moves its feeds to the
+  default rather than deleting them.
+
+### Changed
+
+- A `confirm_token` that does not match its arguments is **refused with the
+  reason** instead of being answered with a fresh prompt, and the confirmation
+  prompt itself is a plain result rather than an error. Both are now the same in
+  every server of the family.
+
+- Runs on **MCP SDK 2.0**. Existing clients see the same protocol revision they
+  always did; the change is the package layout behind it, and it is what lets
+  the dialog above work on both protocol eras from one code path — including
+  behind a stateless gateway, where the older mechanism silently fell back to
+  the weaker token for every client.
+
+- The linter is **oxlint** instead of eslint plus typescript-eslint, which lifts
+  the TypeScript ceiling: typescript-eslint pins `typescript` below 6.1, so this
+  repository was held on TypeScript 6 by its linter rather than by its code.
+
+- The tool filter, the confirmation store, the host guard and the
+  documentation-asset generator now come from **`mcp-tool-allowlist`**,
+  **`mcp-approval`**, **`mcp-internal-hosts`** and **`svg-asset-set`** rather
+  than from copies kept here — 825 fewer lines, and one place to fix each. None
+  of them has a runtime dependency of its own.
+
+  The SSRF guard is the notable one: what leaves is the classification and the
+  resolving, including the two rules this repository contributed upstream — a
+  resolver answering `0.0.0.0` is declining rather than pointing at the fetching
+  host, and a name that does not resolve is passed on. What stays is the
+  refusal, in FreshRSS's own words. The behaviour is unchanged, and
+  `import_opml` now stops resolving as soon as one host is refused instead of
+  spending the whole ten-second budget to reach the same answer.
+
+### Fixed
+
+- Confirmation tokens are compared with a **constant-time** comparison. The copy
+  in this repository used `!==`, which leaks through timing how much of a guess
+  was right. Reaching a token still requires having received it in a previous
+  tool result, so this closes a margin rather than a hole.
+
+- An entry in `FRESHRSS_ALLOW_TOOLS` that is not tool-name-shaped is now
+  **redacted** in the error rather than quoted back. `FRESHRSS_API_PASSWORD` and
+  `FRESHRSS_ALLOW_TOOLS` are adjacent lines in every compose file, and a paste
+  into the wrong one used to print the credential into the client's log.
+
 ## [0.2.0] - 2026-08-27
 
 ### Added
