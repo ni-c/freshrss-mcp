@@ -60,6 +60,7 @@ item tags.
 | `FRESHRSS_INSECURE_TLS` | no       | `true` accepts self-signed certificates for this connection only.                                                    |
 | `FRESHRSS_ALLOW_TOOLS`  | no       | Comma-separated tool names, `list_*` prefixes, or `essential` for a curated preset                                   |
 | `FRESHRSS_DENY_TOOLS`   | no       | Same syntax; removed from whatever `FRESHRSS_ALLOW_TOOLS` left                                                       |
+| `ELICITATION`           | no       | `false` replaces the approval dialog with the two-call token. **Not prefixed.**                                      |
 
 The server starts without credentials so its tools stay listable; every call
 then fails with these setup instructions.
@@ -140,11 +141,14 @@ has no query parameter; narrow the result with `feed_id`/`category` and
   FreshRSS was written by a third party on the internet, so responses that carry
   article text, titles or feed names are explicitly marked as data, never as
   instructions.
-- **Destructive tools are two-step.** They return a single-use confirmation
-  token bound to the exact target; the second call has to carry it. A plain
-  boolean could be set on the very first call, or be talked into it by text
-  hidden in a feed. The confirmation messages deliberately never quote titles or
-  names coming from the API.
+- **A person is asked, not just told.** Where the client supports MCP
+  elicitation, the five irreversible tools raise a real dialog that the model
+  cannot answer on its behalf. A plain boolean could be set on the very first
+  call, or be talked into it by text hidden in a feed. Where the client cannot
+  show a dialog they fall back to a single-use token bound to the exact target,
+  and say so rather than implying somebody approved. The messages deliberately
+  never quote titles or names coming from the API. See
+  [Asking a person](https://freshrss-mcp.ni-c.de/guide/approval).
 - **Response budgets.** FreshRSS returns up to 500 000 characters of HTML per
   article. Article text is converted to plain text, capped per article and
   against a per-response budget, and is opt-in in listings.
@@ -173,11 +177,11 @@ has no query parameter; narrow the result with `feed_id`/`category` and
 - `FRESHRSS_READ_ONLY=true` does not register the write tools at all rather than
   refusing them at call time.
 
-Which tools are gated by a confirmation token: `mark_all_as_read`,
-`unsubscribe_feed`, `delete_category_or_label` and `import_opml`. `mark_articles`
-is deliberately not gated — the caller names each of at most 100 articles
-explicitly and every field can be set back — but it is declared destructive, so a
-client may still prompt for it.
+Which tools ask a person: `mark_all_as_read`, `unsubscribe_feed`,
+`delete_category_or_label`, `import_opml` — and `mark_articles`, but only when it
+is about to mark something **read**. Starring, unstarring and labelling can all
+be set back; which of those articles were unread cannot, and FreshRSS keeps no
+record of it.
 
 ## Container
 

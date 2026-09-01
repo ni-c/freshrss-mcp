@@ -26,6 +26,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its stored articles with it, and a deleted category moves its feeds to the
   default rather than deleting them.
 
+- **`mark_articles` now asks too — but only when it is about to mark something
+  read.** It carries `destructiveHint: true` and went through unannounced, and
+  its own description claimed "All changes are reversible by calling this tool
+  again with the opposite value." Three of the four are. Which of those articles
+  were unread is not, and FreshRSS keeps no record of it — the same reason
+  `mark_all_as_read` is guarded, over a caller-named list instead of a whole
+  stream.
+
+  Starring, unstarring, labelling and marking _unread_ still go straight
+  through. Asking about a star toggle as well would be how people learn to tick
+  without reading. The approval is bound to the exact list of `article_ids`, so
+  one obtained for three articles does not execute against thirty.
+
+- `ELICITATION` switches the dialog off — `false` sends a client that could have
+  been asked down the two-call-token path instead. For a scheduled job or a test
+  harness, where a dialog is the wrong shape rather than an unwanted one.
+
+  It does **not** remove the guard: there is no setting in which a guarded call
+  goes unannounced. Two deliberate rough edges come with it. The variable is
+  **not prefixed**, so one `export ELICITATION=false` reaches every MCP server in
+  the environment — which is why a server started with it off prints a line
+  saying so, and why the fallback text names the server instead of blaming a
+  client that was working fine. And a value that is neither `true` nor `false`
+  **stops the server**: it is the only variable here that defaults to _on_, so
+  failing open on a typo would leave the dialog running while the operator
+  believed it was off. It is read after `FRESHRSS_API_PASSWORD` is wiped from the
+  environment, so that exit cannot leave the password behind.
+
+- A `docs/guide/approval.md` page.
+
 ### Changed
 
 - A `confirm_token` that does not match its arguments is **refused with the

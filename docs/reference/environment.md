@@ -7,6 +7,7 @@
 | `FRESHRSS_API_PASSWORD` | yes | — | The API password from Settings → Profile → API management |
 | `FRESHRSS_READ_ONLY` | no | `false` | `true` registers only the eight read tools |
 | `FRESHRSS_INSECURE_TLS` | no | `false` | `true` accepts a self-signed certificate, scoped to this connection |
+| `ELICITATION` | no | `true` | `false` replaces the approval dialog with the two-call token. **Not prefixed** |
 
 There is no configuration file and no command-line flag; these are the whole surface.
 The reasoning behind each is in [Configuration](/guide/configuration).
@@ -21,6 +22,8 @@ The reasoning behind each is in [Configuration](/guide/configuration).
 | `FRESHRSS_URL` contains `user:password@` | **Exit 1** |
 | `FRESHRSS_URL` is plain http to a non-loopback host | Warning about the unencrypted API password |
 | `FRESHRSS_INSECURE_TLS=true` | Warning that certificate validation is relaxed |
+| `ELICITATION` is neither `true` nor `false` | **Exit 1**, naming both valid values |
+| `ELICITATION=false` | One line saying guarded tools fall back to the two-call token |
 
 A missing credential is deliberately not fatal: the server must be able to complete
 the MCP handshake and answer `tools/list` without one, so registries and sandbox
@@ -29,6 +32,27 @@ A malformed URL *is* fatal — that one could send the API password to the wrong
 
 All diagnostics go to **stderr**, which is where MCP stdio servers must log — stdout
 carries the protocol.
+
+## `ELICITATION`
+
+**Optional**, default `true`. Whether a client that *can* show a dialog is asked
+before a guarded tool acts. `false` takes the two-call-token path instead — it does
+not remove the guard, and a server started with it off prints one line saying so.
+
+Two ways it differs from every other variable on this page:
+
+- **No prefix.** One `export ELICITATION=false` reaches every MCP server in the same
+  environment, not just this one. That is the point of it and also its risk; see
+  [Asking a person](/guide/approval).
+- **Fatal on anything else.** `1`, `off` or a typo stop the server with exit code 1
+  rather than falling back to the default. It is the only variable of this family
+  that defaults to *on*, and a typo that fell back would leave the dialog running
+  while you believed it was off.
+
+Values are trimmed and matched case-insensitively, so `False` and ` false ` both
+work — the strictness is about which words count, not about their shape. It is read
+*after* `FRESHRSS_API_PASSWORD` is deleted from `process.env`, so the fatal path
+cannot leave the password sitting there for a crash reporter.
 
 ## Notes
 

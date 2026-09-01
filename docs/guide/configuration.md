@@ -10,6 +10,7 @@ nothing is written to disk.
 | `FRESHRSS_API_PASSWORD` | yes | The **API password** from Settings → Profile → API management, not the web login password. |
 | `FRESHRSS_READ_ONLY` | no | `true` registers only the read tools. |
 | `FRESHRSS_INSECURE_TLS` | no | `true` accepts a self-signed certificate for this connection only. |
+| `ELICITATION` | no | `false` replaces the approval dialog with the two-call token. **Not prefixed.** |
 
 See the [environment reference](/reference/environment) for the exact validation
 rules.

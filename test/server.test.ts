@@ -386,7 +386,7 @@ describe('write tools', () => {
   it('mark_articles sends the state changes as add and remove tags', async () => {
     const stub = stubFreshRss({ '/edit-tag': 'OK' });
     const result = (await (
-      await connect()
+      await connect({}, 'accept')
     ).callTool({
       name: 'mark_articles',
       arguments: {
@@ -423,13 +423,84 @@ describe('write tools', () => {
   it('mark_articles reports a body that is not OK as a failure', async () => {
     stubFreshRss({ '/edit-tag': 'Bad Request!' });
     const result = (await (
-      await connect()
+      await connect({}, 'accept')
     ).callTool({
       name: 'mark_articles',
       arguments: { article_ids: ['1725750242384960'], read: true },
     })) as CallToolResult;
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/did not confirm/);
+  });
+
+  it('mark_articles asks before marking read, and not before starring', async () => {
+    // The asymmetry is the point: a star can be set back, and FreshRSS keeps
+    // no record of which articles were unread. Asking about a star toggle too
+    // would be how people learn to tick without reading.
+    const stub = stubFreshRss({ '/edit-tag': 'OK' });
+
+    const starring = await connect({}, 'accept');
+    await starring.callTool({
+      name: 'mark_articles',
+      arguments: { article_ids: ['1725750242384960'], starred: true },
+    });
+    expect(starring.prompts).toHaveLength(0);
+    expect(stub.readerCalls).toHaveLength(1);
+
+    const unreading = await connect({}, 'accept');
+    await unreading.callTool({
+      name: 'mark_articles',
+      arguments: { article_ids: ['1725750242384960'], read: false },
+    });
+    expect(unreading.prompts).toHaveLength(0);
+
+    const reading = await connect({}, 'accept');
+    await reading.callTool({
+      name: 'mark_articles',
+      arguments: { article_ids: ['1725750242384960'], read: true },
+    });
+    expect(reading.prompts).toHaveLength(1);
+    expect(reading.prompts[0]).toContain('keeps no record');
+  });
+
+  it('mark_articles marks nothing when the person declines', async () => {
+    const stub = stubFreshRss({ '/edit-tag': 'OK' });
+    const client = await connect({}, 'decline');
+    const result = (await client.callTool({
+      name: 'mark_articles',
+      arguments: { article_ids: ['1725750242384960'], read: true },
+    })) as CallToolResult;
+    expect(result.isError).toBe(true);
+    expect(stub.readerCalls).toHaveLength(0);
+  });
+
+  it('mark_articles binds its token to the exact set of articles', async () => {
+    const stub = stubFreshRss({ '/edit-tag': 'OK' });
+    const client = await connect();
+    const args = { article_ids: ['1725750242384960'], read: true };
+
+    const token = await confirmTokenFor(client, 'mark_articles', args);
+    expect(stub.readerCalls).toHaveLength(0);
+
+    // The model chooses the second list. An approval for one article must not
+    // execute against two.
+    const widened = (await client.callTool({
+      name: 'mark_articles',
+      arguments: {
+        article_ids: ['1725750242384960', '1725750242384961'],
+        read: true,
+        confirm_token: token,
+      },
+    })) as CallToolResult;
+    expect(widened.isError).toBe(true);
+    expect(textOf(widened)).toContain('issued for different arguments');
+    expect(stub.readerCalls).toHaveLength(0);
+
+    const done = (await client.callTool({
+      name: 'mark_articles',
+      arguments: { ...args, confirm_token: token },
+    })) as CallToolResult;
+    expect(done.isError).toBeFalsy();
+    expect(stub.readerCalls).toHaveLength(1);
   });
 
   it('mark_all_as_read needs a confirmation and sends microseconds', async () => {

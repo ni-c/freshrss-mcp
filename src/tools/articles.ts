@@ -314,10 +314,17 @@ export function registerArticleWriteTools(
       title: 'Mark articles',
       description:
         'Sets the read state, the star and user labels of specific articles. ' +
-        'All changes are reversible by calling this tool again with the opposite value. ' +
+        'Starring and labelling are reversible by calling this tool again with ' +
+        'the opposite value. Marking as read is not, so read=true asks a ' +
+        'person first; where the client cannot show a dialog, call once to ' +
+        'receive a token and again with it. ' +
         `At most ${MAX_EDIT_ARTICLES} articles per call; every given change is applied to ` +
         'all of them.',
       inputSchema: z.object({
+        confirm_token: z
+          .string()
+          .optional()
+          .describe('Token from the first call of this tool'),
         article_ids: z
           .array(z.string())
           .min(1)
@@ -340,10 +347,13 @@ export function registerArticleWriteTools(
           .optional()
           .describe('User labels to detach'),
       }),
-      // Deliberately not confirmation-gated, unlike mark_all_as_read: the caller
-      // names every article explicitly and at most 100 of them, and each field
-      // can be set back. What is *not* recoverable is the per-article prior
-      // state, so this is declared destructive and a client may prompt for it.
+      // Guarded on `read === true` only, and that asymmetry is the point.
+      // Starring, unstarring, labelling and marking *unread* all set a field
+      // that can be set back. Marking read destroys which of these articles
+      // were unread, and FreshRSS keeps no record of that — the same reason
+      // mark_all_as_read is guarded, over a caller-named list instead of a
+      // whole stream. Asking about a star toggle as well would be how people
+      // learn to tick without reading.
       annotations: {
         // Destructive despite being a marker: FreshRSS keeps no record of
         // which articles were unread, so this cannot be undone as an
@@ -354,7 +364,10 @@ export function registerArticleWriteTools(
         openWorldHint: false,
       },
     },
-    async ({ article_ids, read, starred, add_labels, remove_labels }) =>
+    async (
+      { article_ids, read, starred, add_labels, remove_labels, confirm_token },
+      mcp
+    ) =>
       run(async () => {
         const add: string[] = [];
         const remove: string[] = [];
@@ -372,6 +385,34 @@ export function registerArticleWriteTools(
           return errorResult(
             'Nothing to change: set at least one of read, starred, add_labels or remove_labels.'
           );
+        }
+
+        if (read === true) {
+          const outcome = await approval.requestApproval(
+            server,
+            mcp,
+            confirmations,
+            {
+              what: `mark ${article_ids.length} article(s) as read`,
+              consequence:
+                'FreshRSS keeps no record of which of them were unread, so ' +
+                'this cannot be undone. The other changes in the same call — ' +
+                'stars and labels — can be set back.',
+              // The exact set: an approval for three articles must not execute
+              // against a longer list the model chose afterwards.
+              resourceKey: setResourceKey('mark_articles', article_ids),
+              token: confirm_token,
+              toolName: 'mark_articles',
+              hint: 'Tick to mark them read, leave it to cancel.',
+            }
+          );
+          if (outcome.decision === 'rejected') {
+            return errorResult(outcome.reason);
+          }
+          if (outcome.decision === 'declined') {
+            return errorResult('The user declined. Nothing was changed.');
+          }
+          if (outcome.decision === 'pending') return outcome.result;
         }
 
         const form = new URLSearchParams();

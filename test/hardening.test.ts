@@ -23,11 +23,20 @@ import { assertTagName, itemIdToDecimal } from '../src/streams.js';
 import { emptyResultHint } from '../src/tools/articles.js';
 import { rawEntry, stubFreshRss, testConfig, type Routes } from './helpers.js';
 
-async function connect(): Promise<Client> {
+async function connect(elicit?: 'accept'): Promise<Client> {
   const server = createServer(testConfig);
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: 'test', version: '0.0.0' });
+  const client = new Client(
+    { name: 'test', version: '0.0.0' },
+    elicit === undefined ? {} : { capabilities: { elicitation: {} } }
+  );
+  if (elicit !== undefined) {
+    client.setRequestHandler('elicitation/create', () => ({
+      action: 'accept',
+      content: { confirm: true },
+    }));
+  }
   await Promise.all([
     client.connect(clientTransport),
     server.connect(serverTransport),
@@ -721,7 +730,7 @@ describe('zod strip invariant', () => {
   // schema would hand the model control over the request itself.
   it('drops unknown fields instead of forwarding them', async () => {
     const stub = stubFreshRss({ '/edit-tag': 'OK' });
-    const client = await connect();
+    const client = await connect('accept');
     const result = (await client.callTool({
       name: 'mark_articles',
       arguments: {

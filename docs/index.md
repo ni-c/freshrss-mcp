@@ -22,7 +22,7 @@ features:
   - title: Narrow it to a reading list
     details: 'FRESHRSS_READ_ONLY=true registers the read tools and nothing else. FRESHRSS_ALLOW_TOOLS cuts finer — essential for a curated seven, your own comma-separated list, or a whole family with list_* — and FRESHRSS_DENY_TOOLS subtracts. Whatever is filtered out does not exist on the protocol rather than failing when called, and a name that matches no tool stops the server at startup instead of quietly going missing.'
   - title: Built for untrusted feeds
-    details: Every article was written by a stranger on the internet, so responses are marked as data, destructive tools need a server-issued token, feed URLs are stripped of credentials, and article text is capped per article and per response.
+    details: 'Every article was written by a stranger on the internet, so responses are marked as data, feed URLs are stripped of credentials, and article text is capped per article and per response. The five irreversible tools ask a person first through MCP elicitation — a dialog the model cannot answer on its behalf — and fall back to a single-use token where the client cannot show one.'
 ---
 
 <figure class="diagram">
@@ -65,10 +65,10 @@ features:
 
   <path class="edge edge-dashed" d="M580,142 L580,172" marker-end="url(#arrow)" />
 
-<text class="label-muted" x="338" y="164" text-anchor="middle">confirm tokens · redaction · response budget</text>
+<text class="label-muted" x="338" y="164" text-anchor="middle">asks a person · redaction · response budget</text>
 </svg>
 <!-- ARCHITECTURE:END -->
-<figcaption>The server holds no state beyond cached auth tokens and short-lived confirmation tokens; FreshRSS remains the source of truth, and it is what polls the feeds.</figcaption>
+<figcaption>The server holds no state beyond cached auth tokens and short-lived approvals; FreshRSS remains the source of truth, and it is what polls the feeds.</figcaption>
 </figure>
 
 ## See it run
