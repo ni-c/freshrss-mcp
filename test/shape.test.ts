@@ -10,7 +10,7 @@ import {
   type RawEntry,
 } from '../src/shape.js';
 import { itemIdToDecimal } from '../src/streams.js';
-import { rawEntry } from './helpers.js';
+import { rawEntry } from './harness.js';
 
 const options: EntryOptions = {
   includeContent: false,

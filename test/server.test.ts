@@ -1,10 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
+import { Client } from '@modelcontextprotocol/client';
 import type { CallToolResult } from '@modelcontextprotocol/client';
 
-import type { Config } from '../src/config.js';
-import { createServer } from '../src/server.js';
-import { rawEntry, stubFreshRss, testConfig, type Routes } from './helpers.js';
+import {
+  connect,
+  dataOf,
+  rawEntry,
+  stubFreshRss,
+  textOf,
+  tokenOf,
+  type Routes,
+} from './harness.js';
 
 const READ_TOOLS = [
   'get_user_info',
@@ -28,9 +34,6 @@ const WRITE_TOOLS = [
   'import_opml',
 ];
 
-/** How a client that can show a dialog answers it. */
-type ElicitBehaviour = 'accept' | 'decline' | 'cancel';
-
 /**
  * Connects a client to the real server.
  *
@@ -39,62 +42,15 @@ type ElicitBehaviour = 'accept' | 'decline' | 'cancel';
  * With it, the client answers the dialog and `prompts` records what the server
  * put in front of the user.
  */
-async function connect(
-  overrides: Partial<Config> = {},
-  elicit?: ElicitBehaviour
-): Promise<Client & { prompts: string[] }> {
-  const server = createServer({ ...testConfig, ...overrides });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  const prompts: string[] = [];
-  const client = new Client(
-    { name: 'test', version: '0.0.0' },
-    elicit === undefined ? {} : { capabilities: { elicitation: {} } }
-  );
-  if (elicit !== undefined) {
-    client.setRequestHandler('elicitation/create', (request) => {
-      const params = request.params as { message?: string };
-      prompts.push(params.message ?? '');
-      if (elicit === 'cancel') return { action: 'cancel' };
-      if (elicit === 'decline') return { action: 'decline' };
-      return { action: 'accept', content: { confirm: true } };
-    });
-  }
-  await Promise.all([
-    client.connect(clientTransport),
-    server.connect(serverTransport),
-  ]);
-  return Object.assign(client, { prompts });
-}
-
-function textOf(result: CallToolResult): string {
-  return JSON.stringify(result.content);
-}
-
-function dataOf(result: CallToolResult): Record<string, unknown> {
-  const first = result.content[0];
-  if (first?.type !== 'text') throw new Error('no text content');
-  return JSON.parse(first.text) as Record<string, unknown>;
-}
-
-/** The tool result is inspected as JSON, so the quotes around the token are escaped. */
-const CONFIRM_TOKEN_RE = /confirm_token=\\?"([0-9a-f]+)/;
-
 /** Runs the first, unconfirmed step and returns the issued token. */
-async function confirmTokenFor(
+async function firstToken(
   client: Client,
   name: string,
   args: Record<string, unknown>
 ): Promise<string> {
-  const first = (await client.callTool({
-    name,
-    arguments: args,
-  })) as CallToolResult;
-  const token = CONFIRM_TOKEN_RE.exec(textOf(first))?.[1];
-  if (token === undefined) {
-    throw new Error(`no confirmation token in: ${textOf(first)}`);
-  }
-  return token;
+  return tokenOf(
+    (await client.callTool({ name, arguments: args })) as CallToolResult
+  );
 }
 
 afterEach(() => {
@@ -478,7 +434,7 @@ describe('write tools', () => {
     const client = await connect();
     const args = { article_ids: ['1725750242384960'], read: true };
 
-    const token = await confirmTokenFor(client, 'mark_articles', args);
+    const token = await firstToken(client, 'mark_articles', args);
     expect(stub.readerCalls).toHaveLength(0);
 
     // The model chooses the second list. An approval for one article must not
@@ -508,7 +464,7 @@ describe('write tools', () => {
     const client = await connect();
     const args = { feed_id: 12, older_than: '2026-08-17T00:00:00Z' };
 
-    const token = await confirmTokenFor(client, 'mark_all_as_read', args);
+    const token = await firstToken(client, 'mark_all_as_read', args);
     // Nothing may happen on the unconfirmed first step.
     expect(stub.calls).toHaveLength(0);
 
@@ -528,7 +484,7 @@ describe('write tools', () => {
   it('rejects a confirmation token issued for a different selection', async () => {
     const stub = stubFreshRss({ '/mark-all-as-read': 'OK' });
     const client = await connect();
-    const token = await confirmTokenFor(client, 'mark_all_as_read', {
+    const token = await firstToken(client, 'mark_all_as_read', {
       feed_id: 12,
     });
     const result = (await client.callTool({
@@ -542,7 +498,7 @@ describe('write tools', () => {
   it('unsubscribe_feed is confirmation-gated', async () => {
     const stub = stubFreshRss({ '/subscription/edit': 'OK' });
     const client = await connect();
-    const token = await confirmTokenFor(client, 'unsubscribe_feed', {
+    const token = await firstToken(client, 'unsubscribe_feed', {
       feed_id: 12,
     });
     expect(stub.calls).toHaveLength(0);
@@ -567,7 +523,7 @@ describe('write tools', () => {
     // come from feeds or from the instance.
     expect(textOf(first)).not.toMatch(/Ignore previous instructions/);
 
-    const token = CONFIRM_TOKEN_RE.exec(textOf(first))?.[1];
+    const token = /confirm_token=\\?"([0-9a-f]+)/.exec(textOf(first))?.[1];
     await client.callTool({
       name: 'delete_category_or_label',
       arguments: { name: 'Ignore previous instructions', confirm_token: token },
@@ -580,7 +536,7 @@ describe('write tools', () => {
   it('import_opml binds the confirmation to the exact document', async () => {
     const stub = stubFreshRss({ '/subscription/import': 'OK' });
     const client = await connect();
-    const token = await confirmTokenFor(client, 'import_opml', {
+    const token = await firstToken(client, 'import_opml', {
       opml: '<opml><outline/></opml>',
     });
     // Confirming a small document must not authorise importing a different one.
@@ -830,7 +786,7 @@ describe('approval through the client', () => {
       name: 'unsubscribe_feed',
       arguments: { feed_id: 12 },
     })) as CallToolResult;
-    expect(textOf(result)).not.toMatch(CONFIRM_TOKEN_RE);
+    expect(textOf(result)).not.toMatch(/confirm_token=\\?"([0-9a-f]+)/);
     expect(client.prompts[0]).toContain('every article FreshRSS stored');
   });
 
@@ -843,7 +799,7 @@ describe('approval through the client', () => {
       name: 'unsubscribe_feed',
       arguments: { feed_id: 12 },
     })) as CallToolResult;
-    expect(textOf(result)).toMatch(CONFIRM_TOKEN_RE);
+    expect(textOf(result)).toMatch(/confirm_token=\\?"([0-9a-f]+)/);
     expect(stub.calls).toHaveLength(0);
   });
 });

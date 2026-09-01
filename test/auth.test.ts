@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { HttpClient } from '../src/api.js';
 import { AuthSession, parseClientLogin } from '../src/auth.js';
-import { stubFreshRss, testConfig } from './helpers.js';
+import { stubFreshRss, testConfig } from './harness.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -24,7 +24,7 @@ describe('parseClientLogin', () => {
 describe('AuthSession', () => {
   it('logs in via POST so the password stays out of the access log', async () => {
     const stub = stubFreshRss();
-    const session = new AuthSession(testConfig, new HttpClient(testConfig));
+    const session = new AuthSession(testConfig(), new HttpClient(testConfig()));
     expect(await session.authToken()).toBe('tester/abc');
 
     const login = stub.calls[0];
@@ -36,7 +36,7 @@ describe('AuthSession', () => {
 
   it('caches the token instead of logging in per call', async () => {
     const stub = stubFreshRss();
-    const session = new AuthSession(testConfig, new HttpClient(testConfig));
+    const session = new AuthSession(testConfig(), new HttpClient(testConfig()));
     await session.authToken();
     await session.authToken();
     expect(stub.calls).toHaveLength(1);
@@ -44,7 +44,7 @@ describe('AuthSession', () => {
 
   it('deduplicates concurrent logins', async () => {
     const stub = stubFreshRss();
-    const session = new AuthSession(testConfig, new HttpClient(testConfig));
+    const session = new AuthSession(testConfig(), new HttpClient(testConfig()));
     await Promise.all([
       session.authToken(),
       session.authToken(),
@@ -55,7 +55,7 @@ describe('AuthSession', () => {
 
   it('logs in again after invalidate()', async () => {
     const stub = stubFreshRss();
-    const session = new AuthSession(testConfig, new HttpClient(testConfig));
+    const session = new AuthSession(testConfig(), new HttpClient(testConfig()));
     await session.authToken();
     session.invalidate();
     await session.authToken();
@@ -64,7 +64,7 @@ describe('AuthSession', () => {
 
   it('fetches the separate write token', async () => {
     stubFreshRss();
-    const session = new AuthSession(testConfig, new HttpClient(testConfig));
+    const session = new AuthSession(testConfig(), new HttpClient(testConfig()));
     expect(await session.writeToken()).toBe('w'.repeat(57));
   });
 
@@ -72,7 +72,7 @@ describe('AuthSession', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('Unauthorized!', { status: 401 })
     );
-    const session = new AuthSession(testConfig, new HttpClient(testConfig));
+    const session = new AuthSession(testConfig(), new HttpClient(testConfig()));
     await expect(session.authToken()).rejects.toThrow(/API password/);
   });
 
@@ -80,7 +80,7 @@ describe('AuthSession', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('Service Unavailable!', { status: 503 })
     );
-    const session = new AuthSession(testConfig, new HttpClient(testConfig));
+    const session = new AuthSession(testConfig(), new HttpClient(testConfig()));
     await expect(session.authToken()).rejects.toThrow(/API access/);
   });
 
@@ -88,7 +88,7 @@ describe('AuthSession', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('<html>login page</html>', { status: 200 })
     );
-    const session = new AuthSession(testConfig, new HttpClient(testConfig));
+    const session = new AuthSession(testConfig(), new HttpClient(testConfig()));
     await expect(session.authToken()).rejects.toThrow(/root of the FreshRSS/);
   });
 });
@@ -98,7 +98,7 @@ describe('HttpClient', () => {
     const spy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response('ok', { status: 200 }));
-    await new HttpClient(testConfig).send('GET', '/x');
+    await new HttpClient(testConfig()).send('GET', '/x');
     const init = spy.mock.calls[0]?.[1] as RequestInit;
     expect(init.redirect).toBe('error');
     expect(init.signal).toBeDefined();

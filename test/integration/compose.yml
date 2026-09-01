@@ -1,0 +1,58 @@
+# Throwaway FreshRSS for `npm run test:integration`.
+#
+# Not a managed stack: brought up, filled by test/integration/bootstrap.ts, and
+# destroyed afterwards. The suite calls every tool in the catalogue,
+# unsubscribes and category deletes included, so nothing here may be a feed
+# list anybody reads.
+#
+# Bound to 127.0.0.1 only.
+services:
+  freshrss:
+    # Overridable so the weekly CI run can point at :latest and report drift
+    # without changing what the PR gate tests.
+    # 1.29.1 on purpose: it is the version the comments in `src/` name as the
+    # one their claims about FreshRSS's GReader implementation were checked
+    # against, so the suite re-checks them rather than checking something else.
+    image: ${FRESHRSS_IMAGE:-freshrss/freshrss:1.29.1}
+    environment:
+      TZ: Etc/UTC
+      CRON_MIN: ''
+      # FreshRSS's own installer variables. Without them the first request is
+      # a five-step browser wizard, and there is no API to skip it.
+      # `--api_enabled` is what the GReader endpoint hangs off. Without it
+      # every API call answers HTTP 503, which reads like the server being
+      # down rather than like a setting being off.
+      FRESHRSS_INSTALL: >-
+        --api_enabled
+        --base_url http://127.0.0.1:8081
+        --default_user integration
+        --auth_type form
+        --db-type sqlite
+      # The account password. The **API** password is a different thing and is
+      # set separately — see bootstrap.ts.
+      FRESHRSS_USER: >-
+        --user integration
+        --password integration-not-a-secret
+        --api_password integration-api-not-a-secret
+        --language en
+    tmpfs:
+      # The database and the user profile live for the length of one run.
+      - /var/www/FreshRSS/data
+    ports:
+      - '127.0.0.1:8081:80'
+    depends_on:
+      - feed
+
+  # A feed FreshRSS can actually fetch, on the compose network and nowhere
+  # else. Its own default subscription points at github.com, which would make
+  # every run depend on somebody else's uptime and on being polite to them —
+  # and would make the suite fail on a machine with no outbound internet for a
+  # reason that has nothing to do with this server.
+  feed:
+    image: ${NGINX_IMAGE:-nginx:1.29-alpine}
+    volumes:
+      - ./feed:/usr/share/nginx/html:ro
+    # Deliberately not published: only FreshRSS needs to reach it, and the
+    # tools pass the URL to FreshRSS rather than fetching it themselves.
+    expose:
+      - '80'

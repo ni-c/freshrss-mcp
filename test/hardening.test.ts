@@ -6,7 +6,6 @@
  * preference being violated. The audit note is quoted in each case.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { CallToolResult } from '@modelcontextprotocol/client';
 import { loadConfig } from '../src/config.js';
 import { redactOpmlCredentials, redactUrlCredentials } from '../src/redact.js';
@@ -18,42 +17,18 @@ import {
   shapeSubscription,
   UNTRUSTED_CONTENT_NOTE,
 } from '../src/shape.js';
-import { createServer } from '../src/server.js';
 import { assertTagName, itemIdToDecimal } from '../src/streams.js';
 import { emptyResultHint } from '../src/tools/articles.js';
-import { rawEntry, stubFreshRss, testConfig, type Routes } from './helpers.js';
+import {
+  connect,
+  dataOf,
+  rawEntry,
+  stubFreshRss,
+  textOf,
+  type Routes,
+} from './harness.js';
 
-async function connect(elicit?: 'accept'): Promise<Client> {
-  const server = createServer(testConfig);
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  const client = new Client(
-    { name: 'test', version: '0.0.0' },
-    elicit === undefined ? {} : { capabilities: { elicitation: {} } }
-  );
-  if (elicit !== undefined) {
-    client.setRequestHandler('elicitation/create', () => ({
-      action: 'accept',
-      content: { confirm: true },
-    }));
-  }
-  await Promise.all([
-    client.connect(clientTransport),
-    server.connect(serverTransport),
-  ]);
-  return client;
-}
-
-function textOf(result: CallToolResult): string {
-  const first = result.content[0];
-  if (first?.type !== 'text') throw new Error('no text content');
-  return first.text;
-}
-
-function dataOf(result: CallToolResult): Record<string, unknown> {
-  return JSON.parse(textOf(result)) as Record<string, unknown>;
-}
-
+/** Stubs the routes, connects, and makes one call. */
 async function call(
   routes: Routes,
   name: string,
@@ -730,7 +705,7 @@ describe('zod strip invariant', () => {
   // schema would hand the model control over the request itself.
   it('drops unknown fields instead of forwarding them', async () => {
     const stub = stubFreshRss({ '/edit-tag': 'OK' });
-    const client = await connect('accept');
+    const client = await connect({}, 'accept');
     const result = (await client.callTool({
       name: 'mark_articles',
       arguments: {

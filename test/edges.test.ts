@@ -1,27 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { CallToolResult } from '@modelcontextprotocol/client';
 
 import { expectOk } from '../src/api.js';
 import { jsonResult, textResult } from '../src/result.js';
-import { createServer } from '../src/server.js';
-import { rawEntry, stubFreshRss, testConfig } from './helpers.js';
-
-async function connect(): Promise<Client> {
-  const server = createServer(testConfig);
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: 'test', version: '0.0.0' });
-  await Promise.all([
-    client.connect(clientTransport),
-    server.connect(serverTransport),
-  ]);
-  return client;
-}
-
-function textOf(result: CallToolResult): string {
-  return JSON.stringify(result.content);
-}
+import {
+  connect,
+  contentOf as textOf,
+  rawEntry,
+  stubFreshRss,
+} from './harness.js';
 
 /** The unescaped text of the first content block. */
 function rawText(result: CallToolResult): string {

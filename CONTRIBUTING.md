@@ -11,18 +11,59 @@ npm test          # no instance needed, the FreshRSS API is stubbed
 npm run build
 ```
 
-A minimal dev environment:
+## Running the integration suite
+
+The unit tests stub the GReader endpoints, which is exactly where the
+interesting part is: GReader is a protocol FreshRSS _reimplements_, and the
+places where its reimplementation differs from what the documentation implies
+are what a stub cannot show. The integration suite spawns the built server over
+stdio against a throwaway FreshRSS in Docker and calls **every tool in the
+catalogue**.
 
 ```sh
-# A throwaway FreshRSS to develop against. Enable the API afterwards under
-# Settings -> Authentication -> "Allow API access", then set an API password
-# under Settings -> Profile -> API management.
-docker run --rm -p 8013:80 -e TZ=Europe/Berlin freshrss/freshrss:latest
+npm run build     # the suite runs dist/index.js, not src/
+docker compose -f test/integration/compose.yml up -d
+npm run test:integration
+docker compose -f test/integration/compose.yml down -v
+```
 
-export FRESHRSS_URL=http://localhost:8013
-export FRESHRSS_USER=dev
-export FRESHRSS_API_PASSWORD=...     # the API password, not the login password
-node dist/index.js
+`down -v` is not tidiness: the suite subscribes at fixed URLs and unsubscribes
+at the end, and FreshRSS refuses a duplicate subscription with "Already
+subscribed!".
+
+The compose stack runs FreshRSS's **CLI installer** through
+`FRESHRSS_INSTALL` / `FRESHRSS_USER`, because the first request is otherwise a
+five-step browser wizard with no API to skip it. Three of those flags are
+load-bearing:
+
+- **`--api_enabled`** is what the GReader endpoint hangs off. Without it every
+  API call answers HTTP 503, which reads like the server being down rather than
+  like a setting being off.
+- **`--api_password` is not `--password`.** The account password signs in to the
+  web interface; the API password is a separate value, and using the account
+  one produces a 401 that says nothing about which of the two it wanted.
+- **`--base_url`** has to match the URL the suite uses, or FreshRSS builds
+  absolute links pointing somewhere else.
+
+The feed the suite subscribes to is served by a **second container** on the
+compose network. FreshRSS's own default subscription points at github.com,
+which would make every run depend on somebody else's uptime, on being polite to
+them, and on the machine having outbound internet at all — none of which has
+anything to do with this server.
+
+The assertion worth keeping is the unread **count**. FreshRSS answers `OK` to a
+mark request whether or not it recognised the article ids, so a wrong id
+conversion — GReader's wire form is `tag:google.com,2005:reader/item/<16 hex>`
+and the write endpoints want the decimal value — is completely silent. The
+count moving is the only thing that shows it worked.
+
+For poking at one tool by hand, the inspector against the same stack:
+
+```sh
+docker compose -f test/integration/compose.yml up -d
+FRESHRSS_URL=http://127.0.0.1:8081 FRESHRSS_USER=integration \
+  FRESHRSS_API_PASSWORD=integration-api-not-a-secret \
+  npx @modelcontextprotocol/inspector node dist/index.js
 ```
 
 ## Expectations
