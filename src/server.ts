@@ -1,5 +1,8 @@
 import { createRequire } from 'node:module';
 import { McpServer } from '@modelcontextprotocol/server';
+import { buildToolFilter, installToolFilter } from 'mcp-tool-allowlist';
+
+import { ALL_TOOLS, ESSENTIAL_TOOLS, READ_TOOLS } from './tools/catalogue.js';
 import {
   registerArticleReadTools,
   registerArticleWriteTools,
@@ -10,7 +13,6 @@ import {
 } from './tools/feeds.js';
 
 import { FreshRssApi } from './api.js';
-import { buildToolFilter, installToolFilter } from './tool-filter.js';
 import type { Config } from './config.js';
 import { ConfirmationStore } from './confirm.js';
 import { registerOpmlReadTools, registerOpmlWriteTools } from './tools/opml.js';
@@ -29,7 +31,25 @@ function packageVersion(): string {
 export function createServer(config: Config): McpServer {
   // Before anything is built: an unusable tool list should fail on the
   // way in, not leave a server running with tools quietly missing.
-  const filter = buildToolFilter(config);
+  const filter = buildToolFilter({
+    allowTools: config.allowTools,
+    denyTools: config.denyTools,
+    catalogue: {
+      all: ALL_TOOLS,
+      essential: ESSENTIAL_TOOLS,
+      ungated: READ_TOOLS,
+    },
+    names: {
+      allow: 'FRESHRSS_ALLOW_TOOLS',
+      deny: 'FRESHRSS_DENY_TOOLS',
+      server: 'freshrss-mcp',
+    },
+    gate: {
+      closed: config.readOnly,
+      variable: 'FRESHRSS_READ_ONLY',
+      noun: 'read-only mode',
+    },
+  });
 
   const api = new FreshRssApi(config);
   const confirmations = new ConfirmationStore();
