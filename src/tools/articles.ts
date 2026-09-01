@@ -319,7 +319,12 @@ export function registerArticleWriteTools(
         'person first; where the client cannot show a dialog, call once to ' +
         'receive a token and again with it. ' +
         `At most ${MAX_EDIT_ARTICLES} articles per call; every given change is applied to ` +
-        'all of them.',
+        'all of them.\n\n' +
+        'FreshRSS answers `OK` whether or not it recognised the ids, so the ' +
+        'result of this tool cannot tell you the change landed. Use the ids ' +
+        'exactly as list_article_ids returned them — not the long ' +
+        '`tag:google.com,...` form — and confirm with get_unread_counts if it ' +
+        'matters: the count is the only thing that moves.',
       inputSchema: z.object({
         confirm_token: z
           .string()
