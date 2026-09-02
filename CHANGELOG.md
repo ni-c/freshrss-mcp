@@ -56,6 +56,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A `docs/guide/approval.md` page.
 
+- `SECURITY.md` states what an approval binds — a decision to a request, not a
+  decision to a moment — why the freshness gap that leaves is unreachable on this
+  server today, and what would have to be built on the day it starts speaking
+  protocol revision `2026-07-28`.
+
+- The live suite now pins three refusals against a real FreshRSS as well as the
+  happy paths: the SSRF guard on `subscribe_feed` and on `import_opml`, each
+  asserted with its reason rather than with a bare "this failed", and a
+  read-only server registering no write tool.
+
 ### Changed
 
 - A `confirm_token` that does not match its arguments is **refused with the
@@ -87,7 +97,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `import_opml` now stops resolving as soon as one host is refused instead of
   spending the whole ten-second budget to reach the same answer.
 
+- The shared libraries move to `mcp-approval` 0.7.1, `mcp-tool-allowlist` 0.2.1,
+  `mcp-internal-hosts` 0.2.1, `mcp-integration-harness` 0.2.0 and
+  `svg-asset-set` 0.2.0.
+
 ### Fixed
+
+- **A feed could stall the server with an article body that shows nothing.**
+  Markup was removed with `replace(/<[^>]+>/g, '')` inside a loop that repeated
+  until the text stopped changing. Every `<` with no `>` behind it made `[^>]+`
+  run to the end of the input and then backtrack a character at a time, so an
+  article could buy quadratic work with linear bytes — measured at 8.8 seconds
+  per article for 122 048 bare `<a`s, 40 seconds for a body of bare `<`s, on the
+  single thread that also serves every other request. The reachable form of it
+  needs no invalid markup at all: `&lt;a` repeated is escaped _text_, which
+  nothing on the FreshRSS or SimplePie path has reason to touch, and the
+  conversion decodes entities between its two passes.
+
+  The conversion is now a single left-to-right scan: at a `<` it looks for the
+  `>` that closes it, discards the span, and never re-reads what it deleted. The
+  repeat-until-stable loop is gone with it — a scan cannot splice `<scr<script>`
+  into a new tag, because it reads the fragment and the tag that follows it in
+  one direction, which is what a browser's tokeniser does with the same bytes.
+  The same payloads now take single-digit milliseconds.
+
+- **The response budget is charged for the markup read, not the text returned.**
+  This was the amplifier under the entry above: a body that strips away to
+  nothing produced no output, so nothing was debited, the budget stayed whole,
+  and every one of the up to 100 articles in the same `list_articles` response
+  was handed a full slice again. An article that fills its slice now costs the
+  per-article limit it was given, whatever came out — which is what the README
+  claimed of the budget all along.
+
+- **A feed password containing an `@` was published in half.** The redaction
+  matched up to the _first_ `@`, but userinfo ends at the last one before the
+  path, and FreshRSS does not percent-encode the password it stores. A feed
+  stored as `https://alice:p@ssw0rd@rss.example/feed` came back as
+  `https://***@ssw0rd@rss.example/feed` from `list_feeds` and the OPML export —
+  the exact disclosure the redaction exists to prevent. `https://host/users/@alice`
+  is still left alone.
+
+- **A hostname can no longer crowd out the `import_opml` confirmation dialog.**
+  The hosts an OPML document points at were interpolated into the server's own
+  question. `URL.hostname` has no length limit — IDNA is applied with
+  `VerifyDnsLength=false`, so a single 5 000-character label parses and survives
+  — so eight of them put tens of thousands of characters of readable,
+  attacker-written text into the question, ahead of the consequence line, which
+  every renderer would then push out of view. The question now states how many
+  hosts there are; the names go on the caller-supplied line, where the approval
+  library flattens and caps them.
+
+- **`FRESHRSS_READ_ONLY` is read tolerantly, as a protection switch should be.**
+  It was compared with `=== 'true'`, so `=1`, `=yes`, `=TRUE` or a trailing space
+  started a server with every write tool registered and said nothing about it —
+  the operator asked for the guard and had no way to learn they had not been
+  given one. `1`, `true` and `yes` now all switch it on, in any casing, with
+  surrounding whitespace ignored. `FRESHRSS_INSECURE_TLS` stays strict on
+  purpose: that one _lifts_ a protection, so a value nobody spelled exactly has
+  to leave certificate validation on.
 
 - Confirmation tokens are compared with a **constant-time** comparison. The copy
   in this repository used `!==`, which leaks through timing how much of a guess

@@ -67,4 +67,48 @@ deliberately — it does not remove the guard, and the server prints one line at
 startup saying it is off.
 
 Data returned from the upstream API is untrusted input: it is marked as such, and
-confirmation prompts never quote it.
+confirmation prompts never quote it in the server's own sentence. Where a value the
+caller chose has to appear at all — the feed hosts an OPML import would subscribe
+to — it goes on a separate line under "Values below are supplied by the caller",
+where the approval library flattens it to one line and caps it. That cap is the
+point: a hostname has no length limit of its own, and thousands of characters of
+readable, attacker-written prose inside the question would push the consequence
+out of view in any dialog that renders it.
+
+## What an approval binds
+
+An approval binds a **decision to a request**. The sealed request state carries the
+resource key, so an answer cannot be moved from the question it was given to a
+different one: confirming an import of a three-feed OPML document does not
+authorise importing another, because the exact document is what the key is built
+from.
+
+What a sealed state does not prove is **freshness**. "This answer belongs to this
+question" and "this answer has not been used already" are different properties, and
+only the first one exists. That gap is not reachable on this server today, and the
+reasons are worth writing down rather than rediscovering:
+
+- **The dialog never leaves the process.** `src/index.ts` connects with
+  `server.connect(new StdioServerTransport())`, which pins the connection to
+  protocol revision `2025-11-25`. Asked for `2026-07-28`, with and without the
+  modern `_meta` envelope, this server still answers `2025-11-25`. On that revision
+  the SDK bridges the elicitation server-side inside the same `tools/call`: the
+  question goes out, the answer comes back, and the sealed state is never handed to
+  the caller. There is no artefact to keep, so there is nothing to replay.
+- **The token fallback is single-use by construction.** A matching token is spent
+  as it is checked, and issuing a new one for the same resource key replaces any
+  pending one. A second call carrying a spent token is refused. Its weakness is the
+  different one stated above — it proves the call was made twice, not that a person
+  saw it.
+
+**On the day this server speaks `2026-07-28`** — which means moving `src/index.ts`
+onto `serveStdio`, the entry point that lets the opening exchange select the era —
+the sealed state does travel, and a replay window opens with it: the caller then
+holds a state that stays valid for its whole lifetime and could present the same
+approved answer again for a second call with the same arguments. What would have to
+be built on that day is a record of spent states — the resource key together with a
+nonce from the state, kept until that state expires and checked before an answer is
+accepted, which is what the token store already does for tokens. None of it exists
+now, on purpose: an unreachable mechanism is one more thing that has to stay
+correct, and this paragraph is the reminder to build it at the moment it starts to
+matter.

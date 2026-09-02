@@ -5,7 +5,7 @@
 | `FRESHRSS_URL` | yes | — | Root URL of the FreshRSS instance, e.g. `https://rss.example.com` |
 | `FRESHRSS_USER` | yes | — | FreshRSS user name |
 | `FRESHRSS_API_PASSWORD` | yes | — | The API password from Settings → Profile → API management |
-| `FRESHRSS_READ_ONLY` | no | `false` | `true` registers only the eight read tools |
+| `FRESHRSS_READ_ONLY` | no | `false` | `1`, `true` or `yes` registers only the eight read tools |
 | `FRESHRSS_INSECURE_TLS` | no | `false` | `true` accepts a self-signed certificate, scoped to this connection |
 | `ELICITATION` | no | `true` | `false` replaces the approval dialog with the two-call token. **Not prefixed** |
 
@@ -56,8 +56,14 @@ cannot leave the password sitting there for a crash reporter.
 
 ## Notes
 
-- Only the exact string `true` enables `FRESHRSS_READ_ONLY` and
-  `FRESHRSS_INSECURE_TLS`; anything else, including `1` and `yes`, leaves them off.
+- `FRESHRSS_READ_ONLY` accepts `1`, `true` or `yes`, in any casing and with
+  surrounding whitespace ignored. Anything else leaves it off. It is read
+  tolerantly because it turns a protection **on**: a value the operator meant as
+  yes but spelled differently would otherwise register every write tool and say
+  nothing about it.
+- `FRESHRSS_INSECURE_TLS` needs the exact string `true`; `1` and `yes` leave it
+  off. Read strictly for the mirror-image reason — it turns a protection **off**,
+  so a value nobody spelled exactly has to leave certificate validation on.
 - Trailing slashes on `FRESHRSS_URL` are stripped.
 - The API path `/api/greader.php` is appended automatically — do not include it.
 - `FRESHRSS_API_PASSWORD` is **deleted from `process.env`** once the configuration has

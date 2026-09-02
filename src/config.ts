@@ -84,6 +84,26 @@ export function parseElicitation(raw: string | undefined): boolean {
 }
 
 /**
+ * Reads a switch that turns a protection *on*, and reads it tolerantly.
+ *
+ * `FRESHRSS_READ_ONLY=1` in a Docker Compose file, `=yes` from a shell script,
+ * `=TRUE` from a Windows environment, a trailing space from a copied `.env`
+ * line: an `=== 'true'` comparison answers all four with a server that quietly
+ * exposes every write tool. The operator asked for the guard and does not find
+ * out that they did not get it — which is exactly the failure a protection
+ * switch must not have.
+ *
+ * The direction is what decides the strictness, not the variable. A switch that
+ * *lifts* a protection is compared strictly, so that a typo leaves the
+ * protection in place; see `FRESHRSS_INSECURE_TLS` above. `ELICITATION` is the
+ * third case and refuses to start at all, because its default is on and a typo
+ * there would be silent in both directions.
+ */
+function isEnabled(raw: string | undefined): boolean {
+  return /^(1|true|yes)$/i.test(raw?.trim() ?? '');
+}
+
+/**
  * Reads the configuration from environment variables.
  *
  * Missing credentials are only a warning, not a fatal error: the server must be
@@ -95,8 +115,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const url = env.FRESHRSS_URL;
   const user = env.FRESHRSS_USER;
   const apiPassword = env.FRESHRSS_API_PASSWORD;
+  // Strict, and right to be: this one *removes* a protection, so anything the
+  // operator did not spell exactly has to leave certificate checking on.
   const insecureTls = env.FRESHRSS_INSECURE_TLS === 'true';
-  const readOnly = env.FRESHRSS_READ_ONLY === 'true';
+  const readOnly = isEnabled(env.FRESHRSS_READ_ONLY);
   const allowTools = env.FRESHRSS_ALLOW_TOOLS;
   const denyTools = env.FRESHRSS_DENY_TOOLS;
 
