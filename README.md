@@ -7,6 +7,7 @@
 [![license](https://img.shields.io/npm/l/%40ni-c%2Ffreshrss-mcp)](LICENSE)
 [![container](https://img.shields.io/badge/ghcr.io-ni--c%2Ffreshrss--mcp-blue)](https://github.com/ni-c/freshrss-mcp/pkgs/container/freshrss-mcp)
 [![docs](https://img.shields.io/badge/docs-freshrss--mcp.ni--c.de-informational)](https://freshrss-mcp.ni-c.de)
+[![HTTP • via mcp-hub](https://img.shields.io/badge/HTTP-via%20mcp--hub-6f42c1)](https://mcp-hub.ni-c.de)
 [![sponsor](https://img.shields.io/badge/sponsor-ni--c-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ni-c)
 
 A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for
@@ -41,6 +42,18 @@ item tags.
 
 ![Demo: listing the tools, the subscribed feeds and the newest article through the MCP Inspector CLI](https://freshrss-mcp.ni-c.de/demo.gif)
 
+## What makes it different
+
+**Sixteen tools, no stream ids.** The Google Reader API speaks in stream
+identifiers and hexadecimal item tags. These tools take numeric feed ids,
+category and label names, ISO dates and decimal article ids, and hand back plain
+text instead of raw HTML.
+
+**Built for untrusted feeds.** Every article was written by a stranger on the
+internet, so responses are marked as data, feed URLs are stripped of credentials,
+and article text is capped per article and per response. The five irreversible
+tools ask a person first, through MCP elicitation.
+
 ## Requirements
 
 - Node.js 22 or newer
@@ -64,6 +77,30 @@ item tags.
 
 The server starts without credentials so its tools stay listable; every call
 then fails with these setup instructions.
+
+### Choosing which tools load
+
+`FRESHRSS_ALLOW_TOOLS` and `FRESHRSS_DENY_TOOLS` take comma-separated tool names;
+a trailing `*` matches a whole family. `essential` is a curated preset of
+seven: `list_feeds`, `list_categories`, `get_unread_counts`, `list_articles`, `get_articles`, `mark_articles`, `mark_all_as_read`.
+
+```sh
+FRESHRSS_ALLOW_TOOLS=essential
+FRESHRSS_ALLOW_TOOLS=list_feeds,list_articles,mark_articles
+FRESHRSS_DENY_TOOLS=delete_*
+```
+
+An entry that matches no tool aborts startup and names it, so a typo cannot
+silently hide a tool — an absent tool is not something anyone traces back to an
+environment variable. A filtered tool is never registered, so it is absent from
+`tools/list` and unknown to `tools/call` alike, exactly like a write tool under
+`FRESHRSS_READ_ONLY`.
+
+If you run several of these servers at once, [mcp-hub](https://mcp-hub.ni-c.de)
+is the other answer — its `/hub` endpoint replaces every server's tools with six
+meta-tools.
+
+## Installation
 
 ### Claude Code
 
@@ -97,6 +134,50 @@ command = "npx"
 args = ["-y", "@ni-c/freshrss-mcp"]
 env = { FRESHRSS_URL = "https://rss.example.com", FRESHRSS_USER = "alice", FRESHRSS_API_PASSWORD = "…" }
 ```
+
+### Docker
+
+```sh
+docker run --rm -i \
+  -e FRESHRSS_URL=https://rss.example.com \
+  -e FRESHRSS_USER=alice \
+  -e FRESHRSS_API_PASSWORD=... \
+  ghcr.io/ni-c/freshrss-mcp:latest
+```
+
+The image is published for `linux/amd64` and `linux/arm64` with an SBOM and build
+provenance. It runs as the unprivileged `node` user and carries no npm, so the
+only thing in it is Node, the runtime dependencies and `dist/`.
+
+### Through mcp-hub
+
+A client that cannot spawn a local process — ChatGPT connectors, Claude on the web,
+Cursor, LibreChat — reaches freshrss-mcp through [mcp-hub](https://mcp-hub.ni-c.de): one
+container serves many stdio MCP servers over Streamable HTTP, with an OAuth 2.1 login
+behind a single password and long-lived tokens for the clients that cannot do OAuth. Its
+`/hub` endpoint puts every server behind six meta-tools, so one connector reaches all of
+them without N×tool schemas in the model's context, and it speaks both protocol revisions
+— a question this server asks travels through it to the person at the far end.
+
+Its `/config/mcp.json` uses Claude Code's format, so the entry is the one you already
+have:
+
+```json
+{
+  "mcpServers": {
+    "freshrss": {
+      "command": "npx",
+      "args": ["-y", "@ni-c/freshrss-mcp"],
+      "env": { "FRESHRSS_ALLOW_TOOLS": "essential" },
+      "denyTools": ["delete_*"]
+    }
+  }
+}
+```
+
+`allowTools` and `denyTools` there are the hub's **own** per-server filter, which is not
+the same thing as `*_ALLOW_TOOLS` in `env` — the difference, and the mistake it invites,
+are in the [client guide](https://freshrss-mcp.ni-c.de/guide/clients#through-mcp-hub).
 
 ## Tools
 
@@ -163,6 +244,16 @@ endpoints filter by stream, read state and date only. `list_articles` therefore
 has no query parameter; narrow the result with `feed_id`/`category` and
 `since`/`until` and filter the returned articles yourself.
 
+## Not exposed, on purpose
+
+**No full-text search**, because FreshRSS offers none over the Google Reader API:
+its endpoints filter by stream, read state and date only. Narrow with `feed_id`,
+`category`, `since` and `until`, then filter the returned articles yourself. The
+search in the FreshRSS web interface has no API endpoint behind it.
+
+**No raw HTML.** Article bodies are converted to plain text and capped per article
+and per response, so one listing cannot bury everything else in the context.
+
 ## Safety
 
 - **Article text is untrusted input.** Everything this server returns from
@@ -216,19 +307,10 @@ is about to mark something **read**. Starring, unstarring and labelling can all
 be set back; which of those articles were unread cannot, and FreshRSS keeps no
 record of it.
 
-## Container
+## Documentation
 
-```sh
-docker run --rm -i \
-  -e FRESHRSS_URL=https://rss.example.com \
-  -e FRESHRSS_USER=alice \
-  -e FRESHRSS_API_PASSWORD=... \
-  ghcr.io/ni-c/freshrss-mcp:latest
-```
-
-The image is published for `linux/amd64` and `linux/arm64` with an SBOM and build
-provenance. It runs as the unprivileged `node` user and carries no npm, so the
-only thing in it is Node, the runtime dependencies and `dist/`.
+The full guide, tool reference and security notes live at
+**[freshrss-mcp.ni-c.de](https://freshrss-mcp.ni-c.de)** (source in [`docs/`](docs/)).
 
 ## Development
 
@@ -257,28 +339,13 @@ section, and publishes the entry to the
 step fails, fix it on `main` and re-run `mcp-registry.yml` by hand — never re-run
 the tagged job, which would check out the old tree.
 
+## Contributing
+
+Issues, discussions and pull requests are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md). For vulnerabilities please use
+[private reporting](https://github.com/ni-c/freshrss-mcp/security/advisories/new)
+rather than a public issue; the policy is in [SECURITY.md](SECURITY.md).
+
 ## License
 
-MIT
-
-### Choosing which tools load
-
-`FRESHRSS_ALLOW_TOOLS` and `FRESHRSS_DENY_TOOLS` take comma-separated tool names;
-a trailing `*` matches a whole family. `essential` is a curated preset of
-seven: `list_feeds`, `list_categories`, `get_unread_counts`, `list_articles`, `get_articles`, `mark_articles`, `mark_all_as_read`.
-
-```sh
-FRESHRSS_ALLOW_TOOLS=essential
-FRESHRSS_ALLOW_TOOLS=list_feeds,list_articles,mark_articles
-FRESHRSS_DENY_TOOLS=delete_*
-```
-
-An entry that matches no tool aborts startup and names it, so a typo cannot
-silently hide a tool — an absent tool is not something anyone traces back to an
-environment variable. A filtered tool is never registered, so it is absent from
-`tools/list` and unknown to `tools/call` alike, exactly like a write tool under
-`FRESHRSS_READ_ONLY`.
-
-If you run several of these servers at once, [mcp-hub](https://mcp-hub.ni-c.de)
-is the other answer — its `/hub` endpoint replaces every server's tools with six
-meta-tools.
+[MIT](LICENSE) © Willi Thiel
