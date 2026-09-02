@@ -1,4 +1,5 @@
 import {
+  expectEveryToolDeclaresOutputSchema,
   expectEveryToolExercised,
   startServer,
   toolCoverage,
@@ -205,7 +206,10 @@ describe('OPML', () => {
 
 describe('the fallback path for a client with no dialog', () => {
   it('deletes a category only after the token comes back', async () => {
-    const refusal = await plain.call('delete_category_or_label', {
+    // The prompt is an error result: nothing was deleted, which is what
+    // `isError` says — and a tool that declares an `outputSchema` may not
+    // answer without `structuredContent` unless the result is an error.
+    const refusal = await plainPrompt('delete_category_or_label', {
       name: 'Integration Renamed',
     });
     expect(refusal).toContain('confirm_token');
@@ -224,7 +228,7 @@ describe('the fallback path for a client with no dialog', () => {
   });
 
   it('unsubscribes only after the token comes back', async () => {
-    const refusal = await plain.call('unsubscribe_feed', { feed_id: feedId });
+    const refusal = await plainPrompt('unsubscribe_feed', { feed_id: feedId });
     expect(refusal).toContain('confirm_token');
 
     await plain.call('unsubscribe_feed', {
@@ -291,6 +295,23 @@ describe('what the server refuses to do to a real FreshRSS', () => {
       await readOnly.close();
     }
   });
+});
+
+/** A guarded tool's first call: the confirmation prompt, which is an error. */
+async function plainPrompt(
+  name: string,
+  args: Record<string, unknown> = {}
+): Promise<string> {
+  return plain.call(name, args, { expectError: /confirm_token=/ });
+}
+
+it('declares an output schema on every tool', async () => {
+  // The unit suite checks the same thing against a stub. Here it is checked
+  // against the server that has just answered every one of these tools against
+  // a real FreshRSS — and each of those answers went through the SDK's
+  // validation against the schema below it.
+  const { tools } = await asking.client.listTools();
+  expectEveryToolDeclaresOutputSchema(tools);
 });
 
 it('exercises every tool in the catalogue', () => {

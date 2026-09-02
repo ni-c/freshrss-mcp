@@ -14,6 +14,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Every tool declares an `outputSchema` and answers with `structuredContent`
+  beside the text block. A client no longer has to parse prose to use a result —
+  which six of them made unavoidable, since they answered with a sentence. The
+  sentence stays, in the text block.
+
+  Every tool that reports feed content carries `untrusted: true` and
+  `source: "freshrss"` as fields. This server has always said so in `notes`,
+  which is prose in a list: a client can read it and cannot check it. Eight
+  tools are without the marker, because their answer is entirely this server's
+  own words — ids it was given, a sentence built from the arguments, the account
+  it authenticates as.
+
+### Changed
+
+- `export_opml` answers `{opml}` instead of the document as the whole result. A
+  schema whose root is a string is served to a 2025-era client rewritten as
+  `{result: …}`, so the tool would have answered in two shapes depending on
+  which revision the client spoke — and `truncated` now has somewhere to live.
+
+- A result too large even after article content is dropped is now an error. It
+  used to answer with the JSON cut at the ceiling, which a text block tolerates
+  and `structuredContent` cannot.
+
+- The two-call `confirm_token` prompt is an error result. What was asked for did
+  not happen, which is what `isError` says. The text is unchanged and still
+  carries the token.
+
+### Added
+
 - The four tools that need a confirmation now **ask the user**, on clients that
   can show a prompt: `unsubscribe_feed`, `mark_all_as_read`,
   `delete_category_or_label` and `import_opml`. The two-call `confirm_token`

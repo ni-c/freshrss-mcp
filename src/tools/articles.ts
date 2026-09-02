@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { article, notes, untrustedFields } from '../output-schema.js';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { setResourceKey } from 'mcp-approval';
 import type { Approver, ConfirmationStore } from 'mcp-approval';
@@ -21,7 +22,7 @@ import {
 
 import { expectOk, type FreshRssApi } from '../api.js';
 import { READ_ONLY } from './annotations.js';
-import { errorResult, jsonResult, run, textResult } from '../result.js';
+import { errorResult, jsonResult, ownWordsResult, run } from '../result.js';
 
 /** Articles per call. FreshRSS itself defaults to 20 and has no upper bound. */
 const DEFAULT_LIMIT = 20;
@@ -188,6 +189,17 @@ export function registerArticleReadTools(
           ),
       }),
       annotations: READ_ONLY,
+      outputSchema: z.object({
+        ...untrustedFields,
+        articles: z.array(article),
+        continuation: z
+          .string()
+          .optional()
+          .describe('Pass back to page. Absent on the last page.'),
+        moreAvailable: z.string().optional(),
+        hint: z.string().optional(),
+        notes,
+      }),
     },
     async (args) =>
       run(async () => {
@@ -242,6 +254,15 @@ export function registerArticleReadTools(
           ),
       }),
       annotations: READ_ONLY,
+      outputSchema: z.object({
+        ...untrustedFields,
+        articles: z.array(article),
+        note: z
+          .string()
+          .optional()
+          .describe('Present when some requested ids returned nothing.'),
+        notes,
+      }),
     },
     async ({ article_ids, max_content_chars }) =>
       run(async () => {
@@ -279,6 +300,13 @@ export function registerArticleReadTools(
         'mark_articles. Same selectors and filters as list_articles.',
       inputSchema: z.object(listingSchema),
       annotations: READ_ONLY,
+      outputSchema: z.object({
+        ...untrustedFields,
+        articleIds: z.array(z.string()),
+        count: z.number().int(),
+        continuation: z.string().optional(),
+        hint: z.string().optional(),
+      }),
     },
     async (args) =>
       run(async () => {
@@ -368,6 +396,13 @@ export function registerArticleWriteTools(
         idempotentHint: true,
         openWorldHint: false,
       },
+      // No untrusted marker: the ids this server was given and a sentence it
+      // built from the arguments. Nothing from a feed survives into it.
+      outputSchema: z.object({
+        updated: z.number().int(),
+        articleIds: z.array(z.string()),
+        changes: z.string(),
+      }),
     },
     async (
       { article_ids, read, starred, add_labels, remove_labels, confirm_token },
@@ -429,9 +464,11 @@ export function registerArticleWriteTools(
           await api.postForm('/edit-tag', form),
           'the change of the article states'
         );
-        return textResult(
-          `Updated ${article_ids.length} article(s): ${describeChanges(read, starred, add_labels, remove_labels)}.`
-        );
+        return ownWordsResult({
+          updated: article_ids.length,
+          articleIds: article_ids,
+          changes: describeChanges(read, starred, add_labels, remove_labels),
+        });
       })
   );
 
@@ -464,6 +501,11 @@ export function registerArticleWriteTools(
         idempotentHint: true,
         openWorldHint: false,
       },
+      outputSchema: z.object({
+        markedAsRead: z.literal(true),
+        stream: z.string().describe('Which stream, in this server’s words.'),
+        olderThan: z.string().describe('The cut-off that was applied.'),
+      }),
     },
     async (args, mcp) =>
       run(async () => {
@@ -515,7 +557,11 @@ export function registerArticleWriteTools(
           await api.postForm('/mark-all-as-read', form),
           'marking the stream as read'
         );
-        return textResult(`Marked ${description} as read.`);
+        return ownWordsResult({
+          markedAsRead: true,
+          stream: description,
+          olderThan,
+        });
       })
   );
 }

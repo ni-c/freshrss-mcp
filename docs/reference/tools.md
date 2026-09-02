@@ -8,6 +8,13 @@ curated seven — see
 Sixteen tools: eight read, eight write. With `FRESHRSS_READ_ONLY=true` only the read
 tools are registered.
 
+Every tool declares an `outputSchema` and answers with `structuredContent` beside
+the text block, so a client can use a result without parsing prose. Every tool
+that reports feed content carries `untrusted: true` and `source: "freshrss"` as
+fields of that object — the note in `notes` is prose a client can read but not
+check. `export_opml` answers `{opml}` rather than the document itself: a schema
+whose root is a string is served to a 2025-era client rewritten as `{result: …}`.
+
 Tools marked 👤 **ask a person** before they act, through MCP elicitation — a dialog
 the model cannot answer on its behalf. Where the client cannot show one they fall back
 to a two-call `confirm_token`, and `ELICITATION=false` takes that fallback

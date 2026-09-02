@@ -128,6 +128,34 @@ Not registered when `FRESHRSS_READ_ONLY=true`.
 | `delete_category_or_label` | Delete a category or a user label.                    | yes          |
 | `import_opml`              | Subscribe to every feed in an OPML document.          | yes          |
 
+### Structured output
+
+Every tool declares an `outputSchema` and answers with `structuredContent`
+alongside the text block, so a client can use the result without parsing prose:
+
+```jsonc
+{
+  "untrusted": true,
+  "source": "freshrss",
+  "articles": [{ "id": "1234", "title": "…", "read": false, "starred": false }],
+  "continuation": "1699999999",
+  "notes": ["…"],
+}
+```
+
+Every tool that reports feed content carries `untrusted: true` and
+`source: "freshrss"` as fields. This server has always said so in `notes` —
+prose in a list, which a client can read but not check — and the field is what
+makes it checkable. Eight tools are without it, because their answer is entirely
+this server's own words: ids it was given, a sentence built from the arguments,
+the account it authenticates as.
+
+Six tools used to answer with a sentence (_"Feed 9 deleted."_); they now answer
+with the fields as well, and the sentence stays in the text block.
+`export_opml` returns `{opml}` rather than the document as the whole result: a
+schema whose root is a string is served to a 2025-era client rewritten as
+`{result: …}`, and `truncated` needs somewhere to live either way.
+
 ### No search
 
 FreshRSS does not offer full-text search over its API — the Google Reader

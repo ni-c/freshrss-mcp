@@ -20,31 +20,77 @@ const MAX_RESULT_BYTES = 400_000;
  * so one greedy listing can be megabytes of HTML. Everything downstream of this
  * function assumes the budget held; this is what guarantees it.
  */
-export function jsonResult(data: unknown): CallToolResult {
-  const text = JSON.stringify(data, null, 2);
-  if (text.length <= MAX_RESULT_BYTES) return textResult(text);
+export function jsonResult(data: Record<string, unknown>): CallToolResult {
+  if (JSON.stringify(data).length <= MAX_RESULT_BYTES) return structured(data);
 
-  const stripped = JSON.stringify(
-    data,
-    (key, value: unknown) =>
+  const stripped = JSON.parse(
+    JSON.stringify(data, (key, value: unknown) =>
       (key === 'content' || key === 'excerpt') && typeof value === 'string'
         ? '(omitted: result too large)'
-        : value,
-    2
-  );
-  const note = `\n\nNote: the result exceeded ${MAX_RESULT_BYTES} characters, so article content was dropped. Fetch it for individual articles with get_articles.`;
-  if (stripped.length <= MAX_RESULT_BYTES) return textResult(stripped + note);
+        : value
+    )
+  ) as Record<string, unknown>;
+  if (JSON.stringify(stripped).length <= MAX_RESULT_BYTES) {
+    return structured({
+      ...stripped,
+      notes: [
+        ...(Array.isArray(stripped.notes) ? stripped.notes : []),
+        `The result exceeded ${MAX_RESULT_BYTES} characters, so article content was dropped. Fetch it for individual articles with get_articles.`,
+      ],
+    });
+  }
 
-  // Dropping `content`/`excerpt` is not always enough: the bulk can sit in fields
-  // this replacer does not touch — a listing of tens of thousands of feeds is all
-  // titles and URLs. Without this the "hard ceiling" would not be one, so the
-  // payload is cut off even though that leaves the JSON unparseable. Truncated
-  // JSON the model can see is still better than megabytes of context.
-  return textResult(
-    `${stripped.slice(0, MAX_RESULT_BYTES)}\n\n… (truncated: the result exceeded ` +
-      `${MAX_RESULT_BYTES} characters even without article content, so the JSON above ` +
-      'is incomplete. Narrow the request — use the filters and the count parameter.)'
+  // Dropping `content`/`excerpt` is not always enough: the bulk can sit in
+  // fields the replacer does not touch — a listing of tens of thousands of
+  // feeds is all titles and URLs.
+  //
+  // This used to answer with the JSON cut at the ceiling, unparseable but
+  // visible. That is no longer an option: `structuredContent` has to parse, the
+  // two channels have to carry the same value, and the SDK checks a result
+  // against the schema its tool declares.
+  throw new ResultTooLargeError(
+    `The result exceeds ${MAX_RESULT_BYTES} characters even without article ` +
+      'content. Narrow the request — use the filters and the count parameter.'
   );
+}
+
+/** Raised by {@link jsonResult}; `run` turns it into an error result. */
+export class ResultTooLargeError extends Error {}
+
+/**
+ * An answer in both channels at once, marked as upstream content.
+ *
+ * `structuredContent` is the machine-readable half and the reason every tool
+ * here declares an `outputSchema`; the text block stays because the SDK does
+ * NOT synthesize one for an object-shaped value, and a client that reads only
+ * `content` would otherwise get an empty answer.
+ *
+ * The marker is a field and not only a line in `notes`. An article title, its
+ * author, a feed title and a label are whatever a publisher put in the feed,
+ * and a client reading `structuredContent` can check a field where it would
+ * have to notice a sentence. The two names are stripped from the payload before
+ * they are set, so the guard cannot be switched off by the content it guards
+ * against.
+ */
+function structured(data: Record<string, unknown>): CallToolResult {
+  const { untrusted: _untrusted, source: _source, ...rest } = data;
+  const value = {
+    untrusted: true as const,
+    source: 'freshrss' as const,
+    ...rest,
+  };
+  return {
+    content: [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    structuredContent: value,
+  };
+}
+
+/** The same, without the marker: this server's own words about its own work. */
+export function ownWordsResult(data: Record<string, unknown>): CallToolResult {
+  return {
+    content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
+    structuredContent: data,
+  };
 }
 
 export function errorResult(text: string): CallToolResult {
@@ -124,7 +170,10 @@ export async function run(
   try {
     return await fn();
   } catch (error) {
-    if (error instanceof ToolInputError) {
+    if (
+      error instanceof ToolInputError ||
+      error instanceof ResultTooLargeError
+    ) {
       return errorResult(error.message);
     }
     if (error instanceof FreshRssApiError) {

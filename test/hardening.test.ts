@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CallToolResult } from '@modelcontextprotocol/client';
 import { loadConfig } from '../src/config.js';
 import { redactOpmlCredentials, redactUrlCredentials } from '../src/redact.js';
-import { jsonResult } from '../src/result.js';
+import { jsonResult, ResultTooLargeError } from '../src/result.js';
 import {
   htmlToText,
   Notes,
@@ -214,13 +214,23 @@ describe('result ceiling', () => {
       feedId: i,
       title: `Feed number ${i} with a fairly long title to add up`,
     }));
-    const text = textOf(jsonResult({ feeds }));
-    expect(text.length).toBeLessThan(420_000);
-    expect(text).toMatch(/truncated/);
+    // It used to answer with the JSON cut at the ceiling — unparseable, but
+    // visible. That stopped being an option when every tool gained an output
+    // schema: `structuredContent` has to parse, the two channels have to carry
+    // the same value, and the SDK checks a result against the schema its tool
+    // declares. There is no answer of this size.
+    expect(() => jsonResult({ feeds })).toThrow(ResultTooLargeError);
   });
 
   it('keeps a small result untouched', () => {
-    expect(textOf(jsonResult({ a: 1 }))).toBe('{\n  "a": 1\n}');
+    // The marker is part of the value now, in both channels: a client that
+    // reads `structuredContent` can check a field where it would otherwise
+    // have to notice a sentence in `notes`.
+    expect(jsonResult({ a: 1 }).structuredContent).toEqual({
+      untrusted: true,
+      source: 'freshrss',
+      a: 1,
+    });
   });
 });
 
@@ -293,8 +303,10 @@ describe('OPML import', () => {
     const result = await call({}, 'import_opml', {
       opml: '<opml><body><outline xmlUrl="https://news.example.com/rss"/></body></opml>',
     });
-    // First step: a confirmation token, not an error.
-    expect(result.isError).toBeFalsy();
+    // First step: a confirmation token. The prompt is an error result — the
+    // import did not happen, and a tool that declares an `outputSchema` may
+    // not answer without `structuredContent` unless the result is an error.
+    expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/confirm_token/);
   });
 });
@@ -347,6 +359,7 @@ describe('subscribe_feed SSRF guard', () => {
       'subscribe_feed',
       { url: 'http://192.168.1.50/rss.xml' }
     );
+
     expect(result.isError).toBeFalsy();
     expect(dataOf(result).feedId).toBe(9);
   });
@@ -419,7 +432,8 @@ describe('import_opml SSRF guard', () => {
         '<opml><body><!-- example: xmlUrl="http://127.0.0.1/rss" -->' +
         '<outline xmlUrl="https://news.example.com/rss"/></body></opml>',
     });
-    expect(result.isError).toBeFalsy();
+    // The confirmation prompt is an error result: nothing was imported.
+    expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/confirm_token/);
   });
 
@@ -450,7 +464,8 @@ describe('import_opml SSRF guard', () => {
         '<opml><head><title><![CDATA[ <outline xmlUrl="http://127.0.0.1/"/> ]]></title>' +
         '</head><body><outline xmlUrl="https://news.example.com/rss"/></body></opml>',
     });
-    expect(result.isError).toBeFalsy();
+    // The confirmation prompt is an error result: nothing was imported.
+    expect(result.isError).toBe(true);
     expect(textOf(result)).toContain('news.example.com');
   });
 
@@ -469,7 +484,8 @@ describe('import_opml SSRF guard', () => {
     ['a protocol-relative xmlUrl on a routable host', '//news.example.com/rss'],
   ])('still imports %s', async (_name, url) => {
     const result = await call({}, 'import_opml', { opml: opmlWith(url) });
-    expect(result.isError).toBeFalsy();
+    // The confirmation prompt is an error result: nothing was imported.
+    expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/confirm_token/);
   });
 
@@ -599,7 +615,8 @@ describe('import_opml SSRF guard', () => {
     const result = await call({}, 'import_opml', {
       opml: opmlWith('https://news.example.com/rss'),
     });
-    expect(result.isError).toBeFalsy();
+    // The confirmation prompt is an error result: nothing was imported.
+    expect(result.isError).toBe(true);
     const text = textOf(result);
     // Still visible — an operator has to see where the document points.
     expect(text).toContain('news.example.com');
@@ -622,7 +639,8 @@ describe('import_opml SSRF guard', () => {
       opml: opmlWith(`https://${host}/rss`),
     });
     const text = textOf(result);
-    expect(result.isError).toBeFalsy();
+    // The confirmation prompt is an error result: nothing was imported.
+    expect(result.isError).toBe(true);
     // Capped by the library's flatten, which the `what` sentence never was.
     expect(text).not.toContain(host);
     expect(text).toContain('… (truncated)');
@@ -638,7 +656,8 @@ describe('import_opml SSRF guard', () => {
     const result = await call({}, 'import_opml', {
       opml: '<?xml version="1.0"?><opml version="2.0"><body><outline text="Folder"/></body></opml>',
     });
-    expect(result.isError).toBeFalsy();
+    // The confirmation prompt is an error result: nothing was imported.
+    expect(result.isError).toBe(true);
     expect(textOf(result)).toContain('subscribing to no feed URLs');
     expect(textOf(result)).not.toContain('supplied by the caller');
   });
@@ -652,7 +671,8 @@ describe('import_opml SSRF guard', () => {
     const result = await call({}, 'import_opml', {
       opml: `<?xml version="1.0"?><opml version="2.0"><body>${outlines}</body></opml>`,
     });
-    expect(result.isError).toBeFalsy();
+    // The confirmation prompt is an error result: nothing was imported.
+    expect(result.isError).toBe(true);
     expect(textOf(result)).toContain('subscribing to feeds on 40 host(s)');
     expect(textOf(result).length).toBeLessThan(1000);
   });
@@ -661,7 +681,9 @@ describe('import_opml SSRF guard', () => {
     const result = await call({}, 'import_opml', {
       opml: opmlWith('http://192.168.1.50/rss.xml'),
     });
-    expect(result.isError).toBeFalsy();
+
+    // The confirmation prompt is an error result: nothing was imported.
+    expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/confirm_token/);
   });
 });

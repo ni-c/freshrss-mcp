@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { notes, untrustedFields } from '../output-schema.js';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { setResourceKey } from 'mcp-approval';
 import type { Approver, ConfirmationStore } from 'mcp-approval';
@@ -11,7 +12,7 @@ import {
 
 import { expectOk, type FreshRssApi } from '../api.js';
 import { READ_ONLY } from './annotations.js';
-import { errorResult, jsonResult, run, textResult } from '../result.js';
+import { errorResult, jsonResult, ownWordsResult, run } from '../result.js';
 import { assertTagName, SPECIAL_STREAMS } from '../streams.js';
 
 // The unread-count endpoint is shared with the feed tools, which own it.
@@ -34,6 +35,13 @@ export function registerTagReadTools(
         'addressed by name in the other tools.',
       inputSchema: z.object({}),
       annotations: READ_ONLY,
+      outputSchema: z.object({
+        ...untrustedFields,
+        categories: z.array(z.looseObject({})),
+        labels: z.array(z.looseObject({})),
+        specialStreams: z.array(z.string()),
+        notes,
+      }),
     },
     async () =>
       run(async () => {
@@ -99,6 +107,11 @@ export function registerTagWriteTools(
         idempotentHint: true,
         openWorldHint: false,
       },
+      outputSchema: z.object({
+        renamed: z.literal(true),
+        from: z.string(),
+        to: z.string(),
+      }),
     },
     async ({ name, new_name }) =>
       run(async () => {
@@ -112,7 +125,11 @@ export function registerTagWriteTools(
           dest: `user/-/label/${to}`,
         });
         expectOk(await api.postForm('/rename-tag', form), 'the rename');
-        return textResult('Renamed.');
+        return ownWordsResult({
+          renamed: true,
+          from,
+          to,
+        });
       })
   );
 
@@ -141,6 +158,7 @@ export function registerTagWriteTools(
         idempotentHint: true,
         openWorldHint: false,
       },
+      outputSchema: z.object({ deleted: z.literal(true), name: z.string() }),
     },
     async ({ name, confirm_token }, mcp) =>
       run(async () => {
@@ -178,7 +196,7 @@ export function registerTagWriteTools(
 
         const form = new URLSearchParams({ s: `user/-/label/${target}` });
         expectOk(await api.postForm('/disable-tag', form), 'the deletion');
-        return textResult('Deleted.');
+        return ownWordsResult({ deleted: true, name });
       })
   );
 }

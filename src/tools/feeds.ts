@@ -1,12 +1,13 @@
 import { z } from 'zod';
+import { feed, notes, untrustedFields } from '../output-schema.js';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { setResourceKey } from 'mcp-approval';
 import type { Approver, ConfirmationStore } from 'mcp-approval';
 import {
   errorResult,
   jsonResult,
+  ownWordsResult,
   run,
-  textResult,
   ToolInputError,
 } from '../result.js';
 import {
@@ -75,6 +76,12 @@ export function registerFeedReadTools(
         'connection and credential check before anything else.',
       inputSchema: z.object({}),
       annotations: READ_ONLY,
+      // No untrusted marker: the account this server authenticates as.
+      outputSchema: z.object({
+        userId: z.string().optional(),
+        userName: z.string().optional(),
+        userEmail: z.string().optional(),
+      }),
     },
     async () =>
       run(async () => {
@@ -101,6 +108,13 @@ export function registerFeedReadTools(
         'subscribed before listing articles.',
       inputSchema: z.object({}),
       annotations: READ_ONLY,
+      outputSchema: z.object({
+        ...untrustedFields,
+        feeds: z.array(feed),
+        feedCount: z.number().int(),
+        totalUnread: z.number().optional(),
+        notes,
+      }),
     },
     async () =>
       run(async () => {
@@ -135,6 +149,15 @@ export function registerFeedReadTools(
         'category, sorted by count. Only entries with unread articles are listed.',
       inputSchema: z.object({}),
       annotations: READ_ONLY,
+      outputSchema: z.object({
+        ...untrustedFields,
+        totalUnread: z.number(),
+        feeds: z.array(z.looseObject({})),
+        categoriesAndLabels: z
+          .array(z.looseObject({}))
+          .describe('FreshRSS reports categories and user labels alike here.'),
+        notes,
+      }),
     },
     async () =>
       run(async () => {
@@ -224,6 +247,11 @@ export function registerFeedWriteTools(
         idempotentHint: false,
         openWorldHint: true,
       },
+      outputSchema: z.object({
+        feedId: z.number().int(),
+        subscribed: z.literal(true),
+        note: z.string(),
+      }),
     },
     async ({ url, title, category }) =>
       run(async () => {
@@ -290,6 +318,10 @@ export function registerFeedWriteTools(
         idempotentHint: true,
         openWorldHint: false,
       },
+      outputSchema: z.object({
+        feedId: z.number().int(),
+        updated: z.literal(true),
+      }),
     },
     async ({ feed_id, title, category }) =>
       run(async () => {
@@ -299,7 +331,7 @@ export function registerFeedWriteTools(
           );
         }
         await editSubscription(api, assertFeedId(feed_id), title, category);
-        return textResult(`Feed ${feed_id} updated.`);
+        return ownWordsResult({ feedId: feed_id, updated: true });
       })
   );
 
@@ -332,6 +364,10 @@ export function registerFeedWriteTools(
         idempotentHint: true,
         openWorldHint: false,
       },
+      outputSchema: z.object({
+        feedId: z.number().int(),
+        unsubscribed: z.literal(true),
+      }),
     },
     async ({ feed_id, confirm_token }, mcp) =>
       run(async () => {
@@ -376,7 +412,7 @@ export function registerFeedWriteTools(
           await api.postForm('/subscription/edit', form),
           `the deletion of feed ${feedId}`
         );
-        return textResult(`Feed ${feedId} deleted.`);
+        return ownWordsResult({ feedId, unsubscribed: true });
       })
   );
 }

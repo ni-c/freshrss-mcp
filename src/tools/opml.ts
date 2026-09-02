@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { untrustedFields } from '../output-schema.js';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { setResourceKey } from 'mcp-approval';
 import type { Approver, ConfirmationStore } from 'mcp-approval';
@@ -7,7 +8,7 @@ import { SLOW_REQUEST_TIMEOUT_MS, type FreshRssApi } from '../api.js';
 import { READ_ONLY } from './annotations.js';
 import { assertRoutableHosts } from '../hosts.js';
 import { redactOpmlCredentials, redactUrlCredentials } from '../redact.js';
-import { errorResult, run, textResult, ToolInputError } from '../result.js';
+import { errorResult, ownWordsResult, run, ToolInputError } from '../result.js';
 import { UNTRUSTED_CONTENT_NOTE } from '../shape.js';
 
 /** Characters of OPML returned to the model. */
@@ -33,6 +34,22 @@ export function registerOpmlReadTools(
         'feed readers. For a readable overview of the subscriptions use list_feeds instead.',
       inputSchema: z.object({}),
       annotations: READ_ONLY,
+      // The document goes in a field. A schema whose root is a string is
+      // served to a 2025-era client rewritten as `{result: …}`, so the tool
+      // would answer in two shapes depending on who asked.
+      outputSchema: z.object({
+        ...untrustedFields,
+        opml: z
+          .string()
+          .describe('XML. Credentials in feed URLs are redacted.'),
+        truncated: z
+          .object({
+            shown: z.number().int(),
+            total: z.number().int(),
+            note: z.string(),
+          })
+          .optional(),
+      }),
     },
     async () =>
       run(async () => {
@@ -42,13 +59,38 @@ export function registerOpmlReadTools(
           await api.getText('/subscription/export')
         );
         const truncated = opml.length > MAX_EXPORT_CHARS;
-        return textResult(
-          `${UNTRUSTED_CONTENT_NOTE}\n\n` +
-            (truncated
-              ? `${opml.slice(0, MAX_EXPORT_CHARS)}\n\n(truncated at ${MAX_EXPORT_CHARS} characters; ` +
-                'use list_feeds for a complete overview of the subscriptions)'
-              : opml)
-        );
+        const shown = truncated ? opml.slice(0, MAX_EXPORT_CHARS) : opml;
+        // The document goes in a field rather than being the result: a schema
+        // whose root is a string is served to a 2025-era client rewritten as
+        // `{result: …}`, so the tool would answer in two shapes depending on
+        // who asked — and `truncated` needs somewhere to live either way.
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                `${UNTRUSTED_CONTENT_NOTE}\n\n` +
+                (truncated
+                  ? `${shown}\n\n(truncated at ${MAX_EXPORT_CHARS} characters; ` +
+                    'use list_feeds for a complete overview of the subscriptions)'
+                  : opml),
+            },
+          ],
+          structuredContent: {
+            untrusted: true as const,
+            source: 'freshrss' as const,
+            opml: shown,
+            ...(truncated
+              ? {
+                  truncated: {
+                    shown: shown.length,
+                    total: opml.length,
+                    note: 'Use list_feeds for a complete overview of the subscriptions.',
+                  },
+                }
+              : {}),
+          },
+        };
       })
   );
 }
@@ -427,6 +469,7 @@ export function registerOpmlWriteTools(
         idempotentHint: false,
         openWorldHint: true,
       },
+      outputSchema: z.object({ imported: z.literal(true), note: z.string() }),
     },
     async ({ opml, confirm_token }, mcp) =>
       run(async () => {
@@ -490,9 +533,10 @@ export function registerOpmlWriteTools(
             `FreshRSS did not confirm the import; it answered: ${body.trim().slice(0, 200)}`
           );
         }
-        return textResult(
-          'OPML imported. Call list_feeds to see the resulting subscriptions.'
-        );
+        return ownWordsResult({
+          imported: true,
+          note: 'Call list_feeds to see the resulting subscriptions.',
+        });
       })
   );
 }
