@@ -73,7 +73,9 @@ export async function bootstrap(
       FRESHRSS_URL: url,
       FRESHRSS_USER: USER,
       FRESHRSS_API_PASSWORD: API_PASSWORD,
-      // Defaults to true in this server; the suite exists to drive the writes.
+      // Off by default, and spelled out anyway: the suite exists to drive the
+      // write tools, so a stray value in the ambient environment must not be
+      // what decides whether they are registered.
       FRESHRSS_READ_ONLY: 'false',
     },
   };

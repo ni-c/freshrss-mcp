@@ -74,7 +74,7 @@ function assertNoDoctype(opml: string): void {
   }
 }
 
-/** Hostnames named in the confirmation prompt before the rest is counted. */
+/** Hostnames listed on the prompt's caller-supplied line before the rest is dropped. */
 const PROMPTED_HOSTS = 8;
 
 /** The attribute names FreshRSS turns into a server-side fetch. */
@@ -361,13 +361,38 @@ function withUtf8Declaration(opml: string): string {
   return declaration + body.slice(end);
 }
 
+/**
+ * How much of the document's reach fits in the server's own sentence: a count.
+ *
+ * The names themselves are the caller's words and belong on a `details` line —
+ * see the call site. Note that this is the only figure here that a document
+ * cannot inflate, which is the point of it being the only one in `what`.
+ */
 function describeHosts(hosts: string[]): string {
   if (hosts.length === 0) return 'no feed URLs';
-  const named = hosts.slice(0, PROMPTED_HOSTS).join(', ');
-  const rest = hosts.length - PROMPTED_HOSTS;
-  return rest > 0
-    ? `feeds on ${named} and ${rest} more host(s)`
-    : `feeds on ${named}`;
+  return `feeds on ${hosts.length} host(s)`;
+}
+
+/**
+ * The host names, as a line the approval library treats as caller input.
+ *
+ * They must not go into the `what` sentence. `URL.hostname` carries no length
+ * limit — IDNA is applied with `VerifyDnsLength=false`, so a single label of
+ * five thousand characters parses and survives — and a document naming eight of
+ * them would put tens of thousands of characters of attacker-written, readable
+ * prose into the question the dialog asks, ahead of the consequence line, which
+ * every renderer would then push out of view. As a detail they go through the
+ * library's `flatten`: collapsed to one line, capped at 200 characters, and
+ * printed under "Values below are supplied by the caller".
+ *
+ * Sliced before the join so that a document naming thousands of hosts does not
+ * build a megabyte of string for `flatten` to cut down to 200 characters.
+ */
+function hostDetails(hosts: string[]): { label: string; value: string }[] {
+  if (hosts.length === 0) return [];
+  return [
+    { label: 'feed hosts', value: hosts.slice(0, PROMPTED_HOSTS).join(', ') },
+  ];
 }
 
 export function registerOpmlWriteTools(
@@ -434,6 +459,7 @@ export function registerOpmlWriteTools(
             consequence:
               'Every feed in the document is subscribed to at once, and FreshRSS ' +
               'fetches each of them. Unsubscribing afterwards is one call per feed.',
+            details: hostDetails(hosts),
             resourceKey: resource,
             token: confirm_token,
             toolName: 'import_opml',

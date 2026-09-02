@@ -7,7 +7,11 @@ import {
 } from 'mcp-integration-harness';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { ALL_TOOLS } from '../../src/tools/catalogue.js';
+import {
+  ALL_TOOLS,
+  READ_TOOLS,
+  WRITE_TOOLS,
+} from '../../src/tools/catalogue.js';
 import {
   bootstrap,
   FEED_TITLE,
@@ -234,6 +238,58 @@ describe('the fallback path for a client with no dialog', () => {
   it('asked a person on one harness and nobody on the other', () => {
     expect(asking.prompts.length).toBeGreaterThan(0);
     expect(plain.prompts).toHaveLength(0);
+  });
+});
+
+describe('what the server refuses to do to a real FreshRSS', () => {
+  /**
+   * Refusals asserted with their reason, never with a bare `expectError: true`.
+   *
+   * A guard test that only asserts "something failed" goes green for the wrong
+   * reasons — a renamed argument, a 500, a schema change — and keeps doing so
+   * after the guard it is named for has stopped being reached. These are the
+   * paths where FreshRSS would make the server-side request, so the message has
+   * to be the SSRF refusal and not merely a failure.
+   */
+  it('will not point FreshRSS at its own loopback interface', async () => {
+    await asking.call(
+      'subscribe_feed',
+      { url: 'http://127.0.0.1:8081/rss' },
+      { expectError: /loopback and link-local/ }
+    );
+  });
+
+  it('will not import an OPML document aimed at the metadata service', async () => {
+    await asking.call(
+      'import_opml',
+      {
+        opml:
+          '<?xml version="1.0"?><opml version="2.0"><body>' +
+          '<outline text="f" xmlUrl="http://169.254.169.254/latest/meta-data/"/>' +
+          '</body></opml>',
+      },
+      { expectError: /loopback and link-local/ }
+    );
+    // Refused before anything was confirmed, so no token was handed out for a
+    // document that was never going to be imported.
+    expect(asking.prompts.join('\n')).not.toContain('169.254.169.254');
+  });
+
+  it('registers no write tool at all when the read-only switch is on', async () => {
+    // Spelled `1` on purpose. The switch used to be read as `=== 'true'`, so
+    // every other spelling an operator plausibly writes started a server with
+    // the full write surface and said nothing about it.
+    const readOnly = await startServer({
+      env: { ...sandbox.env, FRESHRSS_READ_ONLY: '1' },
+    });
+    try {
+      const { tools } = await readOnly.client.listTools();
+      const names = tools.map((tool) => tool.name);
+      expect(names).toEqual(expect.arrayContaining([...READ_TOOLS]));
+      for (const write of WRITE_TOOLS) expect(names).not.toContain(write);
+    } finally {
+      await readOnly.close();
+    }
   });
 });
 

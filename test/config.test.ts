@@ -177,3 +177,43 @@ describe('loadConfig', () => {
     expect(config.insecureTls).toBe(true);
   });
 });
+
+describe('FRESHRSS_READ_ONLY', () => {
+  // A protection switch, so it is read tolerantly. An `=== 'true'` comparison
+  // answered every spelling below with a server exposing all write tools, and
+  // the operator who asked for the guard had no way to notice they had not
+  // been given one.
+  it.each(['1', 'yes', 'YES', 'True', 'TRUE', ' true ', 'Yes\n'])(
+    'is on for %j',
+    (raw) => {
+      expect(
+        loadConfig(env({ ...complete, FRESHRSS_READ_ONLY: raw })).readOnly
+      ).toBe(true);
+    }
+  );
+
+  it.each([undefined, '', 'false', '0', 'no', 'off', 'truthy', 'y'])(
+    'is off for %j',
+    (raw) => {
+      const values =
+        raw === undefined ? complete : { ...complete, FRESHRSS_READ_ONLY: raw };
+      expect(loadConfig(env(values)).readOnly).toBe(false);
+    }
+  );
+
+  it('reads FRESHRSS_INSECURE_TLS strictly, which is the safe direction there', () => {
+    // The opposite switch: this one *lifts* a protection, so anything the
+    // operator did not spell exactly has to leave certificate checking on.
+    for (const raw of ['1', 'yes', 'TRUE', ' true ']) {
+      expect(
+        loadConfig(env({ ...complete, FRESHRSS_INSECURE_TLS: raw }))
+          .insecureTls,
+        raw
+      ).toBe(false);
+    }
+    expect(
+      loadConfig(env({ ...complete, FRESHRSS_INSECURE_TLS: 'true' }))
+        .insecureTls
+    ).toBe(true);
+  });
+});
