@@ -28,6 +28,7 @@ const base: Config = {
   apiPassword: 'p',
   insecureTls: false,
   readOnly: false,
+  elicitation: true,
   allowTools: undefined,
   denyTools: undefined,
 };
