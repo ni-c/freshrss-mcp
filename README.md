@@ -56,7 +56,7 @@ item tags.
 | `FRESHRSS_URL`          | yes      | Root URL of the instance, e.g. `https://rss.example.com`. The API path `/api/greader.php` is appended automatically. |
 | `FRESHRSS_USER`         | yes      | FreshRSS user name.                                                                                                  |
 | `FRESHRSS_API_PASSWORD` | yes      | The **API password** from the profile page, not the web login password.                                              |
-| `FRESHRSS_READ_ONLY`    | no       | `true` registers only the read tools.                                                                                |
+| `FRESHRSS_READ_ONLY`    | no       | `1`, `true` or `yes` registers only the read tools.                                                                  |
 | `FRESHRSS_INSECURE_TLS` | no       | `true` accepts self-signed certificates for this connection only.                                                    |
 | `FRESHRSS_ALLOW_TOOLS`  | no       | Comma-separated tool names, `list_*` prefixes, or `essential` for a curated preset                                   |
 | `FRESHRSS_DENY_TOOLS`   | no       | Same syntax; removed from whatever `FRESHRSS_ALLOW_TOOLS` left                                                       |
@@ -151,7 +151,12 @@ has no query parameter; narrow the result with `feed_id`/`category` and
   [Asking a person](https://freshrss-mcp.ni-c.de/guide/approval).
 - **Response budgets.** FreshRSS returns up to 500 000 characters of HTML per
   article. Article text is converted to plain text, capped per article and
-  against a per-response budget, and is opt-in in listings.
+  against a per-response budget, and is opt-in in listings. The budget is
+  charged for the markup that was read rather than for the text that came out,
+  so it bounds the conversion work and not only the resulting context — markup
+  that strips away to nothing is the expensive case, and it used to be free.
+  The conversion itself is a single left-to-right scan, linear in the length of
+  the article whatever the article contains.
 - **Credentials** are read once, removed from `process.env` afterwards and never
   written to disk. Requests never follow redirects, which would resend the
   authorization header to another host, and relaxed TLS validation is scoped to

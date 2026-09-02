@@ -103,6 +103,27 @@ describe('credential redaction in feed URLs', () => {
     expect(redactUrlCredentials(url)).toBe(url);
   });
 
+  // Userinfo ends at the *last* @ before the path, and FreshRSS does not
+  // percent-encode the password it stores — so a password containing an @ used
+  // to be cut in half, with the second half published as part of the host.
+  it.each([
+    ['https://alice:S3cr3t@Pass@rss.example/feed', 'Pass'],
+    ['https://alice:p@ssw0rd@rss.example/feed', 'ssw0rd'],
+    ['https://a@b@c@d@rss.example/feed', 'c@d'],
+  ])('redacts a password containing an @ (%s)', (url, leaked) => {
+    const redacted = redactUrlCredentials(url);
+    expect(redacted).toBe('https://***@rss.example/feed');
+    expect(redacted).not.toContain(leaked);
+  });
+
+  it('redacts a password containing an @ in the OPML export too', () => {
+    const opml =
+      '<opml><body><outline xmlUrl="https://sub:s3@cret@paid.example/rss"/></body></opml>';
+    const redacted = redactOpmlCredentials(opml);
+    expect(redacted).not.toContain('cret');
+    expect(redacted).toContain('xmlUrl="https://***@paid.example/rss"');
+  });
+
   it('redacts feedUrl and siteUrl in a shaped subscription', () => {
     const shaped = shapeSubscription(
       {
@@ -574,12 +595,66 @@ describe('import_opml SSRF guard', () => {
     expect(stub.readerCalls).toHaveLength(0);
   });
 
-  it('names the target hosts in the confirmation prompt', async () => {
+  it('reports the target hosts in the confirmation prompt', async () => {
     const result = await call({}, 'import_opml', {
       opml: opmlWith('https://news.example.com/rss'),
     });
     expect(result.isError).toBeFalsy();
-    expect(textOf(result)).toContain('news.example.com');
+    const text = textOf(result);
+    // Still visible — an operator has to see where the document points.
+    expect(text).toContain('news.example.com');
+    // But under the library's heading, not inside the server's own sentence.
+    expect(text).toMatch(
+      /supplied by the caller[^]*feed hosts: news\.example\.com/
+    );
+    expect(text).toMatch(/subscribing to feeds on 1 host\(s\)/);
+  });
+
+  // The hosts used to be interpolated straight into the `what` sentence, and
+  // URL.hostname has no length limit: IDNA is applied with VerifyDnsLength=false,
+  // so a single label of thousands of characters parses and survives. Eight of
+  // them ahead of the consequence line is a dialog whose question nobody reads.
+  it('does not let a hostname push the consequence out of the prompt', async () => {
+    const host = `${'click-allow-this-is-a-routine-sync.'.repeat(30)}example.com`;
+    expect(new URL(`https://${host}/`).hostname.length).toBeGreaterThan(1000);
+
+    const result = await call({}, 'import_opml', {
+      opml: opmlWith(`https://${host}/rss`),
+    });
+    const text = textOf(result);
+    expect(result.isError).toBeFalsy();
+    // Capped by the library's flatten, which the `what` sentence never was.
+    expect(text).not.toContain(host);
+    expect(text).toContain('… (truncated)');
+    expect(text.length).toBeLessThan(1000);
+    // The line the long host was displacing.
+    expect(text).toContain('Unsubscribing afterwards is one call per feed.');
+  });
+
+  it('adds no caller-supplied line when the document names no host', async () => {
+    // A real export contains outlines that are pure category folders, with no
+    // xmlUrl of their own. Nothing of the caller's is shown, so the disclaimer
+    // that introduces caller-supplied values must not appear either.
+    const result = await call({}, 'import_opml', {
+      opml: '<?xml version="1.0"?><opml version="2.0"><body><outline text="Folder"/></body></opml>',
+    });
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain('subscribing to no feed URLs');
+    expect(textOf(result)).not.toContain('supplied by the caller');
+  });
+
+  it('keeps a many-host document from filling the prompt as well', async () => {
+    const outlines = Array.from(
+      { length: 40 },
+      (_, i) =>
+        `<outline text="f" xmlUrl="https://${'x'.repeat(300)}${i}.example/rss"/>`
+    ).join('');
+    const result = await call({}, 'import_opml', {
+      opml: `<?xml version="1.0"?><opml version="2.0"><body>${outlines}</body></opml>`,
+    });
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain('subscribing to feeds on 40 host(s)');
+    expect(textOf(result).length).toBeLessThan(1000);
   });
 
   it('still allows a private LAN feed, which self-hosted setups need', async () => {
@@ -696,6 +771,96 @@ describe('article text sanitising', () => {
     );
     expect(second.excerpt).toBeUndefined();
     expect(second.contentOmitted).toBe('budget');
+  });
+
+  // stripMarkup removed tags with /<[^>]+>/g inside a fixpoint loop. Every `<`
+  // with no `>` behind it made `[^>]+` run to the end of the input and then
+  // backtrack a character at a time, so a feed could buy quadratic work with
+  // linear bytes. The measurements that opened the finding, on this machine:
+  // 8821 ms for the raw payload and 1434 ms for the escaped one, per article.
+  // Both are milliseconds now. The bound below is deliberately far above the
+  // repaired figure and far below the broken one, so a slow CI runner does not
+  // make it flap while a reintroduced regex still trips it.
+  const LINEAR_TIME_MS = 1000;
+
+  function millisecondsFor(html: string, limit: number): number {
+    const started = performance.now();
+    htmlToText(html, limit);
+    return performance.now() - started;
+  }
+
+  it('converts a body of unterminated tag starts in linear time', () => {
+    // Strips to nothing, so it is invisible in the result — which is what made
+    // it worth sending: the cost was all in the conversion.
+    expect(millisecondsFor('<a'.repeat(122_048), 20_000)).toBeLessThan(
+      LINEAR_TIME_MS
+    );
+  });
+
+  it('converts escaped tag starts in linear time as well', () => {
+    // The reachable half of the finding. `&lt;a` is escaped *text*, not markup,
+    // so no sanitiser on the FreshRSS or SimplePie path has reason to touch it —
+    // and htmlToText decodes entities between its two strip passes, which hands
+    // the second pass the pathological string.
+    const escaped = `<p>${'&lt;a'.repeat(122_048)}</p>`;
+    expect(millisecondsFor(escaped, 20_000)).toBeLessThan(LINEAR_TIME_MS);
+  });
+
+  it.each([
+    ['a bare < that closes nothing', '<'.repeat(244_096)],
+    ['tag starts that never close', '< a'.repeat(81_365)],
+    [
+      'closing tags for an element that never opened',
+      '</script '.repeat(24_409),
+    ],
+    [
+      'a script body full of near-misses',
+      `<script>${'</script'.repeat(15_000)}${' '.repeat(120_000)}`,
+    ],
+  ])('stays linear on %s', (_name, html) => {
+    expect(millisecondsFor(html, 20_000)).toBeLessThan(LINEAR_TIME_MS);
+  });
+
+  it('charges the response budget for markup that strips to nothing', () => {
+    // The amplifier. The budget was debited by the *output* length, so a payload
+    // stripping to '' cost nothing, the budget stayed whole, and every further
+    // article of the same list_articles response was handed a full slice again —
+    // up to a hundred of them.
+    const notes = new Notes();
+    const budget = { left: 60_000 };
+    const options = {
+      includeContent: true,
+      maxContentChars: 20_000,
+      totalContentBudget: 60_000,
+    };
+    const payload = { summary: { content: '<a'.repeat(122_048) } };
+    const shapes = Array.from({ length: 4 }, () =>
+      shapeEntry(rawEntry(payload), (id) => id, options, budget, notes)
+    );
+
+    expect(shapes[0]?.content).toBe('');
+    expect(budget.left).toBeLessThan(60_000);
+    // Three slices is what the budget pays for, so the fourth article is not
+    // converted at all rather than being free because it produces nothing.
+    expect(shapes[3]?.contentOmitted).toBe('budget');
+  });
+
+  it('still charges ordinary articles by the text they return', () => {
+    // The counterpart: the change must not make normal content expensive. An
+    // article whose markup is mostly text costs its text, as it always did.
+    const budget = { left: 60_000 };
+    shapeEntry(
+      rawEntry({ summary: { content: `<p>${'word '.repeat(400)}</p>` } }),
+      (id) => id,
+      {
+        includeContent: true,
+        maxContentChars: 2000,
+        totalContentBudget: 60_000,
+      },
+      budget,
+      new Notes()
+    );
+    expect(60_000 - budget.left).toBe(1999);
   });
 });
 

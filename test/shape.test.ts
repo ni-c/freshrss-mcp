@@ -118,6 +118,44 @@ describe('htmlToText', () => {
     );
   });
 
+  it('reads tag and element names case-insensitively', () => {
+    const { text } = htmlToText(
+      '<P>One</P><BR>two<SCRIPT>evil()</SCRIPT>',
+      100
+    );
+    expect(text).toContain('One');
+    expect(text).toContain('two');
+    expect(text).not.toContain('evil');
+  });
+
+  it.each([
+    ['a comment', '<p>Text</p><!-- never closed'],
+    ['a processing instruction', '<p>Text</p><?php never closed'],
+    ['an end tag', '<p>Text</p></div never closed'],
+    ['an upper-case tag', '<p>Text</p><SCRIPT src=x'],
+  ])('drops %s that the slice cut off', (_name, html) => {
+    expect(htmlToText(html, 500).text).toBe('Text');
+  });
+
+  it('reads a declaration before the document as markup', () => {
+    expect(htmlToText('<?xml version="1.0"?><p>Text</p>', 500).text).toBe(
+      'Text'
+    );
+  });
+
+  it.each([
+    ['a longer name', '<p>a</p><script>b</scriptx>c'],
+    ['an unrelated end tag', '<p>a</p><script>b</style>c'],
+  ])('does not let %s close a script body', (_name, html) => {
+    // Neither is `</script>`, so the body is still running — and a body that
+    // never closes runs to the end of the input rather than resuming as text.
+    expect(htmlToText(html, 500).text).toBe('a');
+  });
+
+  it('closes a script body whose end tag has space before the >', () => {
+    expect(htmlToText('<script>b</script >c', 500).text).toBe('c');
+  });
+
   it('truncates at the limit and says so', () => {
     const result = htmlToText(`<p>${'x'.repeat(500)}</p>`, 50);
     expect(result.truncated).toBe(true);

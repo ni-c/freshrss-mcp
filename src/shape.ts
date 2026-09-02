@@ -202,10 +202,20 @@ export function shapeEntry(
     return shaped;
   }
 
-  const { text, truncated } = htmlToText(html, limit);
+  const { text, truncated, scanned } = htmlToText(html, limit);
+  // Charged against the markup that was read, not against the text that came
+  // out. Those are the same number for an article, and come apart precisely on
+  // the input that costs the most: markup stripping to nothing used to be free,
+  // so the budget stayed whole and every further article in the same response
+  // was handed a full slice again. SLICE_FACTOR is the rate htmlToText already
+  // works to, which makes an article that fills its slice cost exactly the
+  // per-article limit it was given — and makes the budget bound the work, which
+  // is what README promises of it, rather than only the context it produces.
+  const cost = Math.max(text.length, Math.ceil(scanned / SLICE_FACTOR));
+
   if (options.includeContent) {
     shaped.content = text;
-    budget.left -= text.length;
+    budget.left -= cost;
     if (truncated) {
       shaped.contentTruncated = true;
       notes.add(
@@ -216,7 +226,7 @@ export function shapeEntry(
     shaped.excerpt = text;
     // Debited as well, so the total cap bounds a listing of 100 excerpts and not
     // only the include_content path.
-    budget.left -= text.length;
+    budget.left -= cost;
     if (truncated) shaped.excerptTruncated = true;
   }
   return shaped;
@@ -225,37 +235,156 @@ export function shapeEntry(
 /** Characters of plain text returned when `include_content` is false. */
 export const EXCERPT_CHARS = 300;
 
+/** Closing tags that stand for a line break in the text. */
+const BLOCK_ELEMENTS = new Set([
+  'p',
+  'div',
+  'li',
+  'tr',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'blockquote',
+]);
+
+/** Elements whose body is source code rather than article text. */
+const OPAQUE_ELEMENTS = new Set(['script', 'style']);
+
 /**
- * Removes markup until none is left.
+ * Removes markup in one left-to-right pass.
  *
- * A single pass is not enough: removing one tag can splice its neighbours into
- * a new one, so `<scr<script>ipt>` would come back out as `<script>`. Each pass
- * only ever deletes characters, so repeating until the string stops changing
- * terminates, and it terminates on the first repetition for ordinary markup.
+ * A scan is used rather than `replace(/<[^>]+>/g, '')` because that regex is
+ * quadratic on input a feed can choose: for every `<` with no `>` behind it,
+ * `[^>]+` runs to the end of the string and then backtracks a character at a
+ * time. A body of 122 000 bare `<a`s — which strips to nothing, so it is
+ * invisible in the result — took nine seconds per article, on the single thread
+ * that also serves every other request. Narrowing the class to `[^<>]` makes it
+ * worse, not better, because a fixpoint loop over it then needs n/2 passes.
+ *
+ * Scanning removes the reason for the loop as well. Each character is read once
+ * and deleted text is never re-read, so `<scr<script>ipt>` cannot splice a tag
+ * back together the way a `replace` pass could: the run up to the *next* `<`
+ * closes no tag, is dropped as the fragment it is, and the `<script>` behind it
+ * is then read as the tag it is. That is what a browser's tokeniser does with
+ * the same bytes.
  */
 function stripMarkup(html: string): string {
-  let text = html;
-  let previous: string;
-  do {
-    previous = text;
-    // Script and style bodies are markup, not article text. A body whose
-    // closing tag never arrives runs to the end of the input: that is still
-    // script source, and letting it through would hand the model JavaScript
-    // labelled as an article.
-    text = text.replace(
-      /<(script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi,
-      ' '
-    );
-    text = text.replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, '\n');
-    text = text.replace(/<br\s*\/?>/gi, '\n');
-    text = text.replace(/<[^>]+>/g, '');
-    // htmlToText slices its input, which cuts mid-tag as a matter of course,
-    // and feeds are not required to be well formed either. Without this the
-    // opening fragment survives as literal text.
-    text = text.replace(/<[a-z!/?][^>]*$/i, '');
-  } while (text !== previous);
-  return text;
+  const out: string[] = [];
+  let i = 0;
+  // Carried across iterations, and the reason this stays linear: `indexOf` from
+  // each `<` separately is what re-scanned the tail over and over. `-1` is
+  // final — no `>` at or after one position means none after any later one — so
+  // once it is `-1` no search is ever repeated.
+  let gt = html.indexOf('>');
+
+  while (i < html.length) {
+    const lt = html.indexOf('<', i);
+    if (lt === -1) {
+      out.push(html.slice(i));
+      break;
+    }
+    out.push(html.slice(i, lt));
+
+    if (gt !== -1 && gt < lt) gt = html.indexOf('>', lt);
+    const nextLt = html.indexOf('<', lt + 1);
+
+    if (gt === -1 || (nextLt !== -1 && nextLt < gt)) {
+      // No tag ends here: another `<` opens first, or nothing closes at all.
+      if (!isTagStart(html[lt + 1])) {
+        // A `<` that starts no element name is text — "if x < y" is a
+        // comparison, and feeds are full of them.
+        out.push('<');
+        i = lt + 1;
+        continue;
+      }
+      // A fragment, either spliced (`<scr` in `<scr<script>`) or cut off by the
+      // slice htmlToText takes. Either way it is not article text.
+      if (nextLt === -1) break;
+      i = nextLt;
+      continue;
+    }
+
+    const closing = html[lt + 1] === '/';
+    const name = elementName(html, closing ? lt + 2 : lt + 1);
+    i = gt + 1;
+
+    if (!closing && OPAQUE_ELEMENTS.has(name)) {
+      // Script and style bodies are markup, not article text. A body whose
+      // closing tag never arrives runs to the end of the input: that is still
+      // script source, and letting it through would hand the model JavaScript
+      // labelled as an article.
+      const end = closingTagEnd(html, name, i);
+      i = end === -1 ? html.length : end;
+      out.push(' ');
+    } else if (closing ? BLOCK_ELEMENTS.has(name) : name === 'br') {
+      out.push('\n');
+    }
+  }
+  return out.join('');
 }
+
+/** Whether a `<` is followed by something that could begin a tag. */
+function isTagStart(ch: string | undefined): boolean {
+  if (ch === undefined) return false;
+  return (
+    ch === '!' ||
+    ch === '/' ||
+    ch === '?' ||
+    (ch >= 'a' && ch <= 'z') ||
+    (ch >= 'A' && ch <= 'Z')
+  );
+}
+
+function isElementNameChar(ch: string): boolean {
+  return (
+    (ch >= 'a' && ch <= 'z') ||
+    (ch >= 'A' && ch <= 'Z') ||
+    (ch >= '0' && ch <= '9')
+  );
+}
+
+/** The lower-cased element name starting at `from`, empty if there is none. */
+function elementName(html: string, from: number): string {
+  let end = from;
+  while (end < html.length && isElementNameChar(html[end] as string)) end++;
+  return html.slice(from, end).toLowerCase();
+}
+
+/**
+ * Index just behind `</name>`, or -1 when the body is never closed.
+ *
+ * Matched on the name rather than with `indexOf('</script>')` so that the
+ * spellings libxml and every browser accept — a different case, whitespace
+ * before the `>` — close the body here too. `</scriptx>` deliberately does not.
+ */
+function closingTagEnd(html: string, name: string, from: number): number {
+  let i = from;
+  for (;;) {
+    const at = html.indexOf('</', i);
+    if (at === -1) return -1;
+    let j = at + 2;
+    if (html.slice(j, j + name.length).toLowerCase() === name) {
+      j += name.length;
+      while (j < html.length && /\s/.test(html[j] as string)) j++;
+      if (html[j] === '>') return j + 1;
+    }
+    i = at + 2;
+  }
+}
+
+/**
+ * Characters of markup walked per character of text `limit` allows.
+ *
+ * Also the exchange rate between markup read and response budget spent, see
+ * {@link shapeEntry}.
+ */
+const SLICE_FACTOR = 12;
+
+/** Markup walked regardless of how small `limit` is. */
+const SLICE_SLACK = 4096;
 
 /**
  * Converts article HTML into plain text, bounded by `limit`.
@@ -264,12 +393,16 @@ function stripMarkup(html: string): string {
  * and only the first few thousand characters can possibly survive the limit, so
  * there is no reason to walk the rest. The factor leaves room for markup that
  * strips away to nothing.
+ *
+ * `scanned` is how much of the input that came to — what the call cost, as
+ * opposed to what it produced. The caller needs both, because they come apart
+ * exactly on the input that is expensive.
  */
 export function htmlToText(
   html: string,
   limit: number
-): { text: string; truncated: boolean } {
-  const slice = html.slice(0, limit * 12 + 4096);
+): { text: string; truncated: boolean; scanned: number } {
+  const slice = html.slice(0, limit * SLICE_FACTOR + SLICE_SLACK);
   // Entities decode to whatever they name, angle brackets included, and that
   // happens once the tag pass is already over — so `&lt;script&gt;` in a feed
   // arrives as literal `<script>` unless the markup is taken out again
@@ -292,9 +425,17 @@ export function htmlToText(
 
   if (text.length <= limit) {
     // Only genuinely complete when the slice covered the whole input.
-    return { text, truncated: slice.length < html.length };
+    return {
+      text,
+      truncated: slice.length < html.length,
+      scanned: slice.length,
+    };
   }
-  return { text: `${text.slice(0, limit)}…`, truncated: true };
+  return {
+    text: `${text.slice(0, limit)}…`,
+    truncated: true,
+    scanned: slice.length,
+  };
 }
 
 const NAMED_ENTITIES: Record<string, string> = {
