@@ -1,20 +1,13 @@
 import { z } from 'zod';
-
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-
-import { expectOk, SLOW_REQUEST_TIMEOUT_MS, type FreshRssApi } from '../api.js';
-import {
-  confirmationPrompt,
-  setResourceKey,
-  type ConfirmationStore,
-} from '../confirm.js';
-import { assertRoutableHosts } from '../hosts.js';
-import { redactUrlCredentials } from '../redact.js';
+import { feed, notes, record, untrustedFields } from '../output-schema.js';
+import type { McpServer } from '@modelcontextprotocol/server';
+import { setResourceKey } from 'mcp-approval';
+import type { Approver, ConfirmationStore } from 'mcp-approval';
 import {
   errorResult,
   jsonResult,
+  ownWordsResult,
   run,
-  textResult,
   ToolInputError,
 } from '../result.js';
 import {
@@ -26,6 +19,11 @@ import {
   type RawSubscription,
   type RawUnreadCount,
 } from '../shape.js';
+
+import { expectOk, SLOW_REQUEST_TIMEOUT_MS, type FreshRssApi } from '../api.js';
+import { READ_ONLY } from './annotations.js';
+import { assertRoutableHosts } from '../hosts.js';
+import { redactUrlCredentials } from '../redact.js';
 import { assertFeedId, assertTagName } from '../streams.js';
 
 interface SubscriptionListResponse {
@@ -76,8 +74,14 @@ export function registerFeedReadTools(
       description:
         'Returns the FreshRSS account the server is authenticated as. Useful as a ' +
         'connection and credential check before anything else.',
-      inputSchema: {},
-      annotations: { readOnlyHint: true },
+      inputSchema: z.object({}),
+      annotations: READ_ONLY,
+      // No untrusted marker: the account this server authenticates as.
+      outputSchema: z.object({
+        userId: z.string().optional(),
+        userName: z.string().optional(),
+        userEmail: z.string().optional(),
+      }),
     },
     async () =>
       run(async () => {
@@ -102,8 +106,15 @@ export function registerFeedReadTools(
         'Lists every subscribed feed with its category and unread count. The numeric ' +
         'feedId is what all other tools take as feed_id. Start here to find out what is ' +
         'subscribed before listing articles.',
-      inputSchema: {},
-      annotations: { readOnlyHint: true },
+      inputSchema: z.object({}),
+      annotations: READ_ONLY,
+      outputSchema: z.object({
+        ...untrustedFields,
+        feeds: z.array(feed),
+        feedCount: z.number().int(),
+        totalUnread: z.number().optional(),
+        notes,
+      }),
     },
     async () =>
       run(async () => {
@@ -136,8 +147,17 @@ export function registerFeedReadTools(
       description:
         'Returns how many unread articles are waiting, in total and per feed and ' +
         'category, sorted by count. Only entries with unread articles are listed.',
-      inputSchema: {},
-      annotations: { readOnlyHint: true },
+      inputSchema: z.object({}),
+      annotations: READ_ONLY,
+      outputSchema: z.object({
+        ...untrustedFields,
+        totalUnread: z.number(),
+        feeds: z.array(record),
+        categoriesAndLabels: z
+          .array(record)
+          .describe('FreshRSS reports categories and user labels alike here.'),
+        notes,
+      }),
     },
     async () =>
       run(async () => {
@@ -193,7 +213,8 @@ export function registerFeedReadTools(
 export function registerFeedWriteTools(
   server: McpServer,
   api: FreshRssApi,
-  confirmations: ConfirmationStore
+  confirmations: ConfirmationStore,
+  approval: Approver
 ): void {
   server.registerTool(
     'subscribe_feed',
@@ -203,7 +224,7 @@ export function registerFeedWriteTools(
         'Subscribes to a feed. The URL may point at the feed itself or at a website — ' +
         'FreshRSS discovers the feed and then downloads it, so this call can take a while. ' +
         'A category that does not exist yet is created.',
-      inputSchema: {
+      inputSchema: z.object({
         url: z.string().describe('Feed URL or website URL (http/https)'),
         title: z
           .string()
@@ -213,11 +234,24 @@ export function registerFeedWriteTools(
           .string()
           .optional()
           .describe('Category to file the feed under; created if unknown'),
-      },
+      }),
       // Stated rather than left to the default: this writes, but it only adds a
       // subscription, so it is not destructive. It is also not idempotent —
       // FreshRSS creates a second subscription for the same URL.
-      annotations: { destructiveHint: false, idempotentHint: false },
+      annotations: {
+        // Additive. Open-world: FreshRSS fetches the URL the caller supplies,
+        // so the caller picks the address — the boundary the SSRF guard
+        // watches. Not idempotent: FreshRSS accepts the same feed twice.
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+      outputSchema: z.object({
+        feedId: z.number().int(),
+        subscribed: z.literal(true),
+        note: z.string(),
+      }),
     },
     async ({ url, title, category }) =>
       run(async () => {
@@ -263,7 +297,7 @@ export function registerFeedWriteTools(
       description:
         'Renames a feed and/or moves it to another category. A category that does not ' +
         'exist yet is created. Fields that are not given stay unchanged.',
-      inputSchema: {
+      inputSchema: z.object({
         feed_id: z
           .number()
           .int()
@@ -274,10 +308,20 @@ export function registerFeedWriteTools(
           .string()
           .optional()
           .describe('Category to move the feed to'),
-      },
+      }),
       // Overwrites the title and category, but nothing is deleted and applying
       // the same call twice leaves the same state.
-      annotations: { destructiveHint: false, idempotentHint: true },
+      annotations: {
+        // Replaces the title and category somebody chose.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      outputSchema: z.object({
+        feedId: z.number().int(),
+        updated: z.literal(true),
+      }),
     },
     async ({ feed_id, title, category }) =>
       run(async () => {
@@ -287,7 +331,7 @@ export function registerFeedWriteTools(
           );
         }
         await editSubscription(api, assertFeedId(feed_id), title, category);
-        return textResult(`Feed ${feed_id} updated.`);
+        return ownWordsResult({ feedId: feed_id, updated: true });
       })
   );
 
@@ -300,7 +344,7 @@ export function registerFeedWriteTools(
         'Two-step: the first call returns a confirmation token, the second call with that ' +
         'token performs the deletion. This cannot be undone — re-subscribing starts from ' +
         'whatever the feed currently offers.',
-      inputSchema: {
+      inputSchema: z.object({
         feed_id: z
           .number()
           .int()
@@ -310,31 +354,55 @@ export function registerFeedWriteTools(
           .string()
           .optional()
           .describe('Token from the first call of this tool'),
+      }),
+      annotations: {
+        // Idempotent by the specification's wording — the second call fails,
+        // but the world is the same either way. Every stored article of the
+        // feed goes with it.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
       },
-      annotations: { destructiveHint: true },
+      outputSchema: z.object({
+        feedId: z.number().int(),
+        unsubscribed: z.literal(true),
+      }),
     },
-    async ({ feed_id, confirm_token }) =>
+    async ({ feed_id, confirm_token }, mcp) =>
       run(async () => {
         const feedId = assertFeedId(feed_id);
         const resource = setResourceKey('unsubscribe_feed', [String(feedId)]);
 
-        if (!confirmations.consume(resource, confirm_token)) {
-          if (confirm_token !== undefined) {
-            return errorResult(
-              'The confirmation token is invalid, expired or was issued for a different ' +
-                'feed. Call unsubscribe_feed without a token to get a new one.'
-            );
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            // Deliberately only the id in this text — never the feed title,
+            // which comes from a third-party website.
+            what: `delete feed ${feedId} and all of its stored articles`,
+            consequence:
+              'The subscription and every article FreshRSS stored for it are ' +
+              'gone. Subscribing again fetches only what the feed still offers.',
+            resourceKey: resource,
+            token: confirm_token,
+            toolName: 'unsubscribe_feed',
+            hint: 'Tick to go ahead, leave it to cancel.',
           }
-          // Deliberately only the id in this text — never the feed title, which
-          // comes from a third-party website.
-          return textResult(
-            confirmationPrompt(
-              `delete feed ${feedId} and all of its stored articles`,
-              confirmations.issue(resource),
-              confirmations.ttlMinutes
-            )
+        );
+        // A token that was sent and did not match is refused with the reason
+        // rather than answered with a fresh prompt; the sentence is the
+        // library's, so every server refuses in the same words.
+        if (outcome.decision === 'rejected') {
+          return errorResult(outcome.reason);
+        }
+        if (outcome.decision === 'declined') {
+          return errorResult(
+            `The user declined. unsubscribe_feed did nothing.`
           );
         }
+        if (outcome.decision === 'pending') return outcome.result;
 
         const form = new URLSearchParams({
           ac: 'unsubscribe',
@@ -344,7 +412,7 @@ export function registerFeedWriteTools(
           await api.postForm('/subscription/edit', form),
           `the deletion of feed ${feedId}`
         );
-        return textResult(`Feed ${feedId} deleted.`);
+        return ownWordsResult({ feedId, unsubscribed: true });
       })
   );
 }

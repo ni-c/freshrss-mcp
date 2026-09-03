@@ -1,7 +1,18 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    // The integration suite has its own config and its own command, because it
+    // needs a FreshRSS in Docker. Excluding it here keeps `npm test` runnable
+    // with nothing installed, and keeps the coverage numbers below comparable
+    // to what they measured before it existed.
+    exclude: [...configDefaults.exclude, 'test/integration/**'],
+    // mcp-internal-hosts is transformed rather than taken as an external
+    // dependency, so that `vi.mock('node:dns/promises')` reaches the resolving
+    // it does on this server's behalf. Without it the guard tests would pass
+    // against a real resolver, which is to say against whatever the machine
+    // running them happens to answer.
+    server: { deps: { inline: ['mcp-internal-hosts'] } },
     coverage: {
       provider: 'v8',
       include: ['src/**'],

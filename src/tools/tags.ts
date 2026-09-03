@@ -1,21 +1,20 @@
 import { z } from 'zod';
-
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-
-import { expectOk, type FreshRssApi } from '../api.js';
-import {
-  confirmationPrompt,
-  setResourceKey,
-  type ConfirmationStore,
-} from '../confirm.js';
-import { errorResult, jsonResult, run, textResult } from '../result.js';
+import { notes, record, untrustedFields } from '../output-schema.js';
+import type { McpServer } from '@modelcontextprotocol/server';
+import { setResourceKey } from 'mcp-approval';
+import type { Approver, ConfirmationStore } from 'mcp-approval';
 import {
   labelFromStreamId,
   unreadCountIndex,
   UNTRUSTED_CONTENT_NOTE,
   type RawTag,
 } from '../shape.js';
+
+import { expectOk, type FreshRssApi } from '../api.js';
+import { READ_ONLY } from './annotations.js';
+import { errorResult, jsonResult, ownWordsResult, run } from '../result.js';
 import { assertTagName, SPECIAL_STREAMS } from '../streams.js';
+
 // The unread-count endpoint is shared with the feed tools, which own it.
 import {
   loadUnreadCountsOptional,
@@ -34,8 +33,15 @@ export function registerTagReadTools(
         'Lists the categories (folders that hold feeds) and the user labels (tags that ' +
         'are attached to individual articles), each with its unread count. Both are ' +
         'addressed by name in the other tools.',
-      inputSchema: {},
-      annotations: { readOnlyHint: true },
+      inputSchema: z.object({}),
+      annotations: READ_ONLY,
+      outputSchema: z.object({
+        ...untrustedFields,
+        categories: z.array(record),
+        labels: z.array(record),
+        specialStreams: z.array(z.string()),
+        notes,
+      }),
     },
     async () =>
       run(async () => {
@@ -75,7 +81,8 @@ export function registerTagReadTools(
 export function registerTagWriteTools(
   server: McpServer,
   api: FreshRssApi,
-  confirmations: ConfirmationStore
+  confirmations: ConfirmationStore,
+  approval: Approver
 ): void {
   server.registerTool(
     'rename_category_or_label',
@@ -85,12 +92,26 @@ export function registerTagWriteTools(
         'Renames a category (folder) or a user label. FreshRSS resolves the name against ' +
         'its categories first and falls back to labels, so one tool covers both. Feeds and ' +
         'articles keep their assignment.',
-      inputSchema: {
+      inputSchema: z.object({
         name: z
           .string()
           .describe('Current name, exactly as in list_categories'),
         new_name: z.string().describe('New name'),
+      }),
+      annotations: {
+        // Replaces a name somebody chose, on every feed or article carrying
+        // it. Had no annotations at all, so it inherited the destructive
+        // default — which happens to be right, but was never a decision.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
       },
+      outputSchema: z.object({
+        renamed: z.literal(true),
+        from: z.string(),
+        to: z.string(),
+      }),
     },
     async ({ name, new_name }) =>
       run(async () => {
@@ -104,7 +125,11 @@ export function registerTagWriteTools(
           dest: `user/-/label/${to}`,
         });
         expectOk(await api.postForm('/rename-tag', form), 'the rename');
-        return textResult('Renamed.');
+        return ownWordsResult({
+          renamed: true,
+          from,
+          to,
+        });
       })
   );
 
@@ -118,40 +143,60 @@ export function registerTagWriteTools(
         'first, so a category and a label of the same name cannot be told apart here. ' +
         'Two-step: the first call returns a confirmation token, the second call with that ' +
         'token performs the deletion.',
-      inputSchema: {
+      inputSchema: z.object({
         name: z.string().describe('Name, exactly as in list_categories'),
         confirm_token: z
           .string()
           .optional()
           .describe('Token from the first call of this tool'),
+      }),
+      annotations: {
+        // A category moves its feeds to the default; a label is removed from
+        // every article. Neither comes back.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
       },
-      annotations: { destructiveHint: true },
+      outputSchema: z.object({ deleted: z.literal(true), name: z.string() }),
     },
-    async ({ name, confirm_token }) =>
+    async ({ name, confirm_token }, mcp) =>
       run(async () => {
         const target = assertTagName(name, 'category or label');
         const resource = setResourceKey('delete_category_or_label', [target]);
 
-        if (!confirmations.consume(resource, confirm_token)) {
-          if (confirm_token !== undefined) {
-            return errorResult(
-              'The confirmation token is invalid, expired or was issued for a different ' +
-                'name. Call delete_category_or_label without a token to get a new one.'
-            );
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what: 'delete the given category or label',
+            consequence:
+              'If it is a category its feeds move to the default category; if it ' +
+              'is a label it is removed from every article. Neither can be undone ' +
+              'from here.',
+            resourceKey: resource,
+            token: confirm_token,
+            toolName: 'delete_category_or_label',
+            hint: 'Tick to go ahead, leave it to cancel.',
           }
-          return textResult(
-            confirmationPrompt(
-              'delete the given category or label — if it is a category its feeds move ' +
-                'to the default category, if it is a label it is removed from every article',
-              confirmations.issue(resource),
-              confirmations.ttlMinutes
-            )
+        );
+        // A token that was sent and did not match is refused with the reason
+        // rather than answered with a fresh prompt; the sentence is the
+        // library's, so every server refuses in the same words.
+        if (outcome.decision === 'rejected') {
+          return errorResult(outcome.reason);
+        }
+        if (outcome.decision === 'declined') {
+          return errorResult(
+            `The user declined. delete_category_or_label did nothing.`
           );
         }
+        if (outcome.decision === 'pending') return outcome.result;
 
         const form = new URLSearchParams({ s: `user/-/label/${target}` });
         expectOk(await api.postForm('/disable-tag', form), 'the deletion');
-        return textResult('Deleted.');
+        return ownWordsResult({ deleted: true, name });
       })
   );
 }

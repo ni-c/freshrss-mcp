@@ -1,14 +1,8 @@
 import { z } from 'zod';
-
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-
-import { expectOk, type FreshRssApi } from '../api.js';
-import {
-  confirmationPrompt,
-  setResourceKey,
-  type ConfirmationStore,
-} from '../confirm.js';
-import { errorResult, jsonResult, run, textResult } from '../result.js';
+import { article, notes, untrustedFields } from '../output-schema.js';
+import type { McpServer } from '@modelcontextprotocol/server';
+import { setResourceKey } from 'mcp-approval';
+import type { Approver, ConfirmationStore } from 'mcp-approval';
 import {
   Notes,
   shapeEntry,
@@ -25,6 +19,10 @@ import {
   toUnixSeconds,
   type StreamSelector,
 } from '../streams.js';
+
+import { expectOk, type FreshRssApi } from '../api.js';
+import { READ_ONLY } from './annotations.js';
+import { errorResult, jsonResult, ownWordsResult, run } from '../result.js';
 
 /** Articles per call. FreshRSS itself defaults to 20 and has no upper bound. */
 const DEFAULT_LIMIT = 20;
@@ -174,7 +172,7 @@ export function registerArticleReadTools(
         'FreshRSS has no full-text search over its API, so there is no way to query by ' +
         'keyword — narrow the result with feed_id/category and since/until instead and ' +
         'filter the returned articles yourself.',
-      inputSchema: {
+      inputSchema: z.object({
         ...listingSchema,
         include_content: z
           .boolean()
@@ -189,8 +187,19 @@ export function registerArticleReadTools(
           .describe(
             `Characters of article text per article, default ${DEFAULT_MAX_CONTENT_CHARS}`
           ),
-      },
-      annotations: { readOnlyHint: true },
+      }),
+      annotations: READ_ONLY,
+      outputSchema: z.object({
+        ...untrustedFields,
+        articles: z.array(article),
+        continuation: z
+          .string()
+          .optional()
+          .describe('Pass back to page. Absent on the last page.'),
+        moreAvailable: z.string().optional(),
+        hint: z.string().optional(),
+        notes,
+      }),
     },
     async (args) =>
       run(async () => {
@@ -228,7 +237,7 @@ export function registerArticleReadTools(
       description:
         'Fetches the full text of specific articles by id, as plain text. ' +
         `At most ${MAX_GET_ARTICLES} ids per call.`,
-      inputSchema: {
+      inputSchema: z.object({
         article_ids: z
           .array(z.string())
           .min(1)
@@ -243,8 +252,17 @@ export function registerArticleReadTools(
           .describe(
             `Characters of article text per article, default ${DEFAULT_MAX_CONTENT_CHARS}`
           ),
-      },
-      annotations: { readOnlyHint: true },
+      }),
+      annotations: READ_ONLY,
+      outputSchema: z.object({
+        ...untrustedFields,
+        articles: z.array(article),
+        note: z
+          .string()
+          .optional()
+          .describe('Present when some requested ids returned nothing.'),
+        notes,
+      }),
     },
     async ({ article_ids, max_content_chars }) =>
       run(async () => {
@@ -280,8 +298,15 @@ export function registerArticleReadTools(
       description:
         'Lists only the ids of matching articles — the cheap way to collect a set for ' +
         'mark_articles. Same selectors and filters as list_articles.',
-      inputSchema: listingSchema,
-      annotations: { readOnlyHint: true },
+      inputSchema: z.object(listingSchema),
+      annotations: READ_ONLY,
+      outputSchema: z.object({
+        ...untrustedFields,
+        articleIds: z.array(z.string()),
+        count: z.number().int(),
+        continuation: z.string().optional(),
+        hint: z.string().optional(),
+      }),
     },
     async (args) =>
       run(async () => {
@@ -308,7 +333,8 @@ export function registerArticleReadTools(
 export function registerArticleWriteTools(
   server: McpServer,
   api: FreshRssApi,
-  confirmations: ConfirmationStore
+  confirmations: ConfirmationStore,
+  approval: Approver
 ): void {
   server.registerTool(
     'mark_articles',
@@ -316,10 +342,22 @@ export function registerArticleWriteTools(
       title: 'Mark articles',
       description:
         'Sets the read state, the star and user labels of specific articles. ' +
-        'All changes are reversible by calling this tool again with the opposite value. ' +
+        'Starring and labelling are reversible by calling this tool again with ' +
+        'the opposite value. Marking as read is not, so read=true asks a ' +
+        'person first; where the client cannot show a dialog, call once to ' +
+        'receive a token and again with it. ' +
         `At most ${MAX_EDIT_ARTICLES} articles per call; every given change is applied to ` +
-        'all of them.',
-      inputSchema: {
+        'all of them.\n\n' +
+        'FreshRSS answers `OK` whether or not it recognised the ids, so the ' +
+        'result of this tool cannot tell you the change landed. Use the ids ' +
+        'exactly as list_article_ids returned them — not the long ' +
+        '`tag:google.com,...` form — and confirm with get_unread_counts if it ' +
+        'matters: the count is the only thing that moves.',
+      inputSchema: z.object({
+        confirm_token: z
+          .string()
+          .optional()
+          .describe('Token from the first call of this tool'),
         article_ids: z
           .array(z.string())
           .min(1)
@@ -341,14 +379,35 @@ export function registerArticleWriteTools(
           .array(z.string())
           .optional()
           .describe('User labels to detach'),
+      }),
+      // Guarded on `read === true` only, and that asymmetry is the point.
+      // Starring, unstarring, labelling and marking *unread* all set a field
+      // that can be set back. Marking read destroys which of these articles
+      // were unread, and FreshRSS keeps no record of that — the same reason
+      // mark_all_as_read is guarded, over a caller-named list instead of a
+      // whole stream. Asking about a star toggle as well would be how people
+      // learn to tick without reading.
+      annotations: {
+        // Destructive despite being a marker: FreshRSS keeps no record of
+        // which articles were unread, so this cannot be undone as an
+        // operation. Idempotent — marking a read article read changes nothing.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
       },
-      // Deliberately not confirmation-gated, unlike mark_all_as_read: the caller
-      // names every article explicitly and at most 100 of them, and each field
-      // can be set back. What is *not* recoverable is the per-article prior
-      // state, so this is declared destructive and a client may prompt for it.
-      annotations: { destructiveHint: true, idempotentHint: true },
+      // No untrusted marker: the ids this server was given and a sentence it
+      // built from the arguments. Nothing from a feed survives into it.
+      outputSchema: z.object({
+        updated: z.number().int(),
+        articleIds: z.array(z.string()),
+        changes: z.string(),
+      }),
     },
-    async ({ article_ids, read, starred, add_labels, remove_labels }) =>
+    async (
+      { article_ids, read, starred, add_labels, remove_labels, confirm_token },
+      mcp
+    ) =>
       run(async () => {
         const add: string[] = [];
         const remove: string[] = [];
@@ -368,6 +427,34 @@ export function registerArticleWriteTools(
           );
         }
 
+        if (read === true) {
+          const outcome = await approval.requestApproval(
+            server,
+            mcp,
+            confirmations,
+            {
+              what: `mark ${article_ids.length} article(s) as read`,
+              consequence:
+                'FreshRSS keeps no record of which of them were unread, so ' +
+                'this cannot be undone. The other changes in the same call — ' +
+                'stars and labels — can be set back.',
+              // The exact set: an approval for three articles must not execute
+              // against a longer list the model chose afterwards.
+              resourceKey: setResourceKey('mark_articles', article_ids),
+              token: confirm_token,
+              toolName: 'mark_articles',
+              hint: 'Tick to mark them read, leave it to cancel.',
+            }
+          );
+          if (outcome.decision === 'rejected') {
+            return errorResult(outcome.reason);
+          }
+          if (outcome.decision === 'declined') {
+            return errorResult('The user declined. Nothing was changed.');
+          }
+          if (outcome.decision === 'pending') return outcome.result;
+        }
+
         const form = new URLSearchParams();
         for (const id of article_ids) form.append('i', assertArticleId(id));
         for (const value of add) form.append('a', value);
@@ -377,9 +464,11 @@ export function registerArticleWriteTools(
           await api.postForm('/edit-tag', form),
           'the change of the article states'
         );
-        return textResult(
-          `Updated ${article_ids.length} article(s): ${describeChanges(read, starred, add_labels, remove_labels)}.`
-        );
+        return ownWordsResult({
+          updated: article_ids.length,
+          articleIds: article_ids,
+          changes: describeChanges(read, starred, add_labels, remove_labels),
+        });
       })
   );
 
@@ -392,7 +481,7 @@ export function registerArticleWriteTools(
         'Two-step: the first call returns a confirmation token, the second call with that ' +
         'token performs the change. Which articles were unread before cannot be recovered ' +
         'afterwards.',
-      inputSchema: {
+      inputSchema: z.object({
         ...selectorSchema,
         older_than: z
           .string()
@@ -404,10 +493,21 @@ export function registerArticleWriteTools(
           .string()
           .optional()
           .describe('Token from the first call of this tool'),
+      }),
+      annotations: {
+        // The same, over a whole selection.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
       },
-      annotations: { destructiveHint: true },
+      outputSchema: z.object({
+        markedAsRead: z.literal(true),
+        stream: z.string().describe('Which stream, in this server’s words.'),
+        olderThan: z.string().describe('The cut-off that was applied.'),
+      }),
     },
-    async (args) =>
+    async (args, mcp) =>
       run(async () => {
         const { streamId, description } = resolveStream(selectorOf(args));
         const olderThan =
@@ -419,24 +519,35 @@ export function registerArticleWriteTools(
           olderThan,
         ]);
 
-        if (!confirmations.consume(resource, args.confirm_token)) {
-          if (args.confirm_token !== undefined) {
-            return errorResult(
-              'The confirmation token is invalid, expired or was issued for a different ' +
-                'selection. Call mark_all_as_read without a token to get a new one.'
-            );
-          }
-          return textResult(
-            confirmationPrompt(
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what:
               `mark every article in ${description} as read` +
-                (args.older_than === undefined
-                  ? ''
-                  : ' that is older than the given date'),
-              confirmations.issue(resource),
-              confirmations.ttlMinutes
-            )
-          );
+              (args.older_than === undefined
+                ? ''
+                : ' that is older than the given date'),
+            consequence:
+              'FreshRSS keeps no record of which articles were unread, so this ' +
+              'cannot be undone for the selection as a whole.',
+            resourceKey: resource,
+            token: args.confirm_token,
+            toolName: 'mark_all_as_read',
+            hint: 'Tick to mark them read, leave it to cancel.',
+          }
+        );
+        // A token that was sent and did not match is refused with the reason
+        // rather than answered with a fresh prompt; the sentence is the
+        // library's, so every server refuses in the same words.
+        if (outcome.decision === 'rejected') {
+          return errorResult(outcome.reason);
         }
+        if (outcome.decision === 'declined') {
+          return errorResult('The user declined. Nothing was marked as read.');
+        }
+        if (outcome.decision === 'pending') return outcome.result;
 
         // `ts` is documented as nanoseconds but is compared against the entry id,
         // and FreshRSS entry ids are microsecond timestamps — see
@@ -446,7 +557,11 @@ export function registerArticleWriteTools(
           await api.postForm('/mark-all-as-read', form),
           'marking the stream as read'
         );
-        return textResult(`Marked ${description} as read.`);
+        return ownWordsResult({
+          markedAsRead: true,
+          stream: description,
+          olderThan,
+        });
       })
   );
 }

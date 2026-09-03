@@ -69,6 +69,6 @@
 
     <path class="edge edge-dashed" d="M580,142 L580,172" marker-end="url(#arrow)" />
 
-  <text class="label-muted" x="338" y="164" text-anchor="middle">confirm tokens · redaction · response budget</text>
+  <text class="label-muted" x="338" y="164" text-anchor="middle">asks a person · redaction · response budget</text>
   </g>
 </svg>

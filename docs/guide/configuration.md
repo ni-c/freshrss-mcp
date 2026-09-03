@@ -8,8 +8,9 @@ nothing is written to disk.
 | `FRESHRSS_URL` | yes | Root URL of the instance, e.g. `https://rss.example.com`. The API path `/api/greader.php` is appended automatically. |
 | `FRESHRSS_USER` | yes | FreshRSS user name. |
 | `FRESHRSS_API_PASSWORD` | yes | The **API password** from Settings → Profile → API management, not the web login password. |
-| `FRESHRSS_READ_ONLY` | no | `true` registers only the read tools. |
+| `FRESHRSS_READ_ONLY` | no | `1`, `true` or `yes` registers only the read tools. |
 | `FRESHRSS_INSECURE_TLS` | no | `true` accepts a self-signed certificate for this connection only. |
+| `ELICITATION` | no | `false` replaces the approval dialog with the two-call token. **Not prefixed.** |
 
 See the [environment reference](/reference/environment) for the exact validation
 rules.
@@ -32,9 +33,17 @@ malformed URL is exactly how credentials get sent to the wrong host:
 
 ## `FRESHRSS_READ_ONLY`
 
-With `true`, the write tools are **not registered at all** — they do not appear in
-`tools/list`. This is deliberate: a tool that exists but refuses at call time still
-invites the model to try, and still shows up in the client's tool picker.
+With `1`, `true` or `yes` — any casing, surrounding whitespace ignored — the write
+tools are **not registered at all**: they do not appear in `tools/list`. This is
+deliberate: a tool that exists but refuses at call time still invites the model to
+try, and still shows up in the client's tool picker.
+
+It is read that tolerantly on purpose, and `FRESHRSS_INSECURE_TLS` below is not.
+This switch turns a protection **on**, so a value the operator meant as yes but
+spelled as `1` has to be taken as yes — being strict here means handing somebody
+who asked for the guard a server with every write tool, and no way to notice. The
+other switch turns a protection **off**, where being strict is what keeps a typo
+harmless.
 
 Read-only leaves eight tools: `get_user_info`, `list_feeds`, `list_categories`,
 `get_unread_counts`, `list_articles`, `get_articles`, `list_article_ids` and

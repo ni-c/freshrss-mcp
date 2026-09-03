@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Integration Feed</title>
+  <link href="http://feed/atom.xml" rel="self"/>
+  <link href="http://feed/"/>
+  <id>urn:uuid:8f2b1c4e-integration-feed</id>
+  <updated>2026-09-01T10:00:00Z</updated>
+  <entry>
+    <title>First integration article</title>
+    <link href="http://feed/first"/>
+    <id>urn:uuid:integration-article-1</id>
+    <updated>2026-09-01T10:00:00Z</updated>
+    <summary>The first article the integration suite reads.</summary>
+    <content type="html">&lt;p&gt;Body of the first article, with a PINEAPPLE marker.&lt;/p&gt;</content>
+  </entry>
+  <entry>
+    <title>Second integration article</title>
+    <link href="http://feed/second"/>
+    <id>urn:uuid:integration-article-2</id>
+    <updated>2026-09-01T09:00:00Z</updated>
+    <summary>The second article.</summary>
+    <content type="html">&lt;p&gt;Body of the second article.&lt;/p&gt;</content>
+  </entry>
+  <entry>
+    <title>Third integration article</title>
+    <link href="http://feed/third"/>
+    <id>urn:uuid:integration-article-3</id>
+    <updated>2026-09-01T08:00:00Z</updated>
+    <summary>The third article.</summary>
+    <content type="html">&lt;p&gt;Body of the third article.&lt;/p&gt;</content>
+  </entry>
+</feed>

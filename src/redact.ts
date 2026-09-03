@@ -5,8 +5,15 @@
  * that is already percent- or XML-encoded is handed back byte-identical when it
  * holds no credentials, and a value that is *not* a valid URL — the case
  * `loadConfig` reports on — still gets redacted.
+ *
+ * The class excludes `/?#` but deliberately not `@`, because userinfo ends at
+ * the *last* `@` before the path, not the first. FreshRSS does not percent-encode
+ * the password it stores, so `https://alice:p@ssw0rd@host/feed` is an ordinary
+ * stored feed — and stopping at the first `@` would have published `ssw0rd` as
+ * part of the host. Not crossing `/` is what keeps `https://host/users/@alice`
+ * untouched: there is no `@` reachable from the scheme without passing the path.
  */
-const URL_USERINFO = /^([a-z][a-z0-9+.-]*:\/\/)[^/?#@]*@/i;
+const URL_USERINFO = /^([a-z][a-z0-9+.-]*:\/\/)[^/?#]*@/i;
 
 /**
  * Removes credentials from a URL before it reaches the model or a log.

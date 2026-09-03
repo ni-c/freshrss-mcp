@@ -8,9 +8,21 @@ curated seven — see
 Sixteen tools: eight read, eight write. With `FRESHRSS_READ_ONLY=true` only the read
 tools are registered.
 
-Tools marked **two-step** return a single-use confirmation token on the first call and
-perform the operation only when called again with that token — see
-[Security](/guide/security#confirmation-tokens).
+Every tool declares an `outputSchema` and answers with `structuredContent` beside
+the text block, so a client can use a result without parsing prose. Every tool
+that reports feed content carries `untrusted: true` and `source: "freshrss"` as
+fields of that object — the note in `notes` is prose a client can read but not
+check. `export_opml` answers `{opml}` rather than the document itself: a schema
+whose root is a string is served to a 2025-era client rewritten as `{result: …}`.
+
+Tools marked 👤 **ask a person** before they act, through MCP elicitation — a dialog
+the model cannot answer on its behalf. Where the client cannot show one they fall back
+to a two-call `confirm_token`, and `ELICITATION=false` takes that fallback
+deliberately. See [Asking a person](/guide/approval).
+
+Every tool declares all four MCP annotations — `readOnlyHint`, `destructiveHint`,
+`idempotentHint`, `openWorldHint`. `openWorldHint` is `true` only on `subscribe_feed`
+and `import_opml`, the two that make FreshRSS fetch a URL the caller chose.
 
 ## Stream selectors
 
@@ -111,7 +123,7 @@ characters. For a readable overview use `list_feeds`.
 
 ## Write tools
 
-### mark_articles
+### mark_articles 👤
 
 | Parameter | Type | Meaning |
 | --- | --- | --- |
@@ -121,10 +133,14 @@ characters. For a readable overview use `list_feeds`.
 | `add_labels` | string[] | Labels to attach; unknown ones are created |
 | `remove_labels` | string[] | Labels to detach |
 
-At least one change is required; each is applied to every given article. Not
-confirmation-gated — see [why](/guide/security#confirmation-tokens).
+At least one change is required; each is applied to every given article.
 
-### mark_all_as_read — two-step
+**Asks a person when `read: true`**, and only then. Starring, unstarring, labelling
+and marking *unread* set a field that can be set back; which articles were unread
+cannot be recovered, and FreshRSS keeps no record of it. The approval is bound to the
+exact list of `article_ids`. Takes `confirm_token` on the fallback path.
+
+### mark_all_as_read 👤
 
 Stream selector, plus `older_than` (ISO date, default: all) and `confirm_token`.
 
@@ -149,7 +165,7 @@ fetches the URL itself, which would make this an
 `feed_id` (integer, required), plus `title` and/or `category`. At least one of the two.
 Fields not given stay unchanged; an unknown category is created.
 
-### unsubscribe_feed — two-step
+### unsubscribe_feed 👤
 
 `feed_id` (integer) and `confirm_token`.
 
@@ -161,7 +177,7 @@ reversible: re-subscribing starts from whatever the feed currently offers.
 `name` and `new_name`. FreshRSS resolves the name against categories first and falls
 back to labels, so one tool covers both. Feeds and articles keep their assignment.
 
-### delete_category_or_label — two-step
+### delete_category_or_label 👤
 
 `name` and `confirm_token`.
 
@@ -169,7 +185,7 @@ For a **category**, its feeds move to the default category and no articles are l
 For a **label**, it is detached from every article. Because FreshRSS matches categories
 first, a category and a label of the same name cannot be told apart here.
 
-### import_opml — two-step
+### import_opml 👤
 
 `opml` (the document, up to 900 000 characters) and `confirm_token`.
 

@@ -1,30 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/client';
 
 import { expectOk } from '../src/api.js';
-import { ConfirmationStore, setResourceKey } from '../src/confirm.js';
 import { jsonResult, textResult } from '../src/result.js';
-import { createServer } from '../src/server.js';
-import { rawEntry, stubFreshRss, testConfig } from './helpers.js';
-
-async function connect(): Promise<Client> {
-  const server = createServer(testConfig);
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: 'test', version: '0.0.0' });
-  await Promise.all([
-    client.connect(clientTransport),
-    server.connect(serverTransport),
-  ]);
-  return client;
-}
-
-function textOf(result: CallToolResult): string {
-  return JSON.stringify(result.content);
-}
+import {
+  connect,
+  contentOf as textOf,
+  rawEntry,
+  stubFreshRss,
+} from './harness.js';
 
 /** The unescaped text of the first content block. */
 function rawText(result: CallToolResult): string {
@@ -63,21 +47,6 @@ describe('expectOk', () => {
 
   it('rejects anything else and quotes a bounded part of it', () => {
     expect(() => expectOk('x'.repeat(500), 'the change')).toThrow(/…/);
-  });
-});
-
-describe('ConfirmationStore', () => {
-  it('bounds the number of pending tokens', () => {
-    const store = new ConfirmationStore();
-    const first = setResourceKey('op', ['0']);
-    const firstToken = store.issue(first);
-    for (let i = 1; i <= 100; i++) store.issue(setResourceKey('op', [`${i}`]));
-    // The oldest entries are evicted, so a refused-call loop cannot grow the map.
-    expect(store.consume(first, firstToken)).toBe(false);
-  });
-
-  it('reports the lifetime in minutes for the prompt text', () => {
-    expect(new ConfirmationStore(5 * 60_000).ttlMinutes).toBe(5);
   });
 });
 

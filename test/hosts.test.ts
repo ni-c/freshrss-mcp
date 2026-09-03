@@ -1,14 +1,19 @@
 /**
- * Tests for the host classifier behind the SSRF guard.
+ * What this repository still has to prove about the SSRF guard.
  *
- * The cases with an IPv4-mapped IPv6 literal are the reported bypass
- * (GHSA-qqh2-7466-82f8): `URL` hands the guard `[::ffff:7f00:1]`, the old
- * string comparison saw nothing it knew, and every dual-stack client dials it
- * as 127.0.0.1. A failure here means that door is open again.
+ * The classifier lives in `mcp-internal-hosts` and is tested there: the
+ * IPv4-mapped IPv6 literals of the reported bypass (GHSA-qqh2-7466-82f8), the
+ * metadata endpoints, scope ids, the root label, every spelling of loopback.
+ * Repeating that here would test the dependency.
+ *
+ * What only this repository can assert is the decision it makes on the answer —
+ * the library reports which hosts are internal and deliberately refuses to
+ * decide what follows. Everything below is about that: the refusal FreshRSS
+ * raises, the cases it lets through on purpose, and the work it does not do.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { assertRoutableHosts, internalHostKind } from '../src/hosts.js';
+import { assertRoutableHosts } from '../src/hosts.js';
 
 const lookup = vi.hoisted(() => vi.fn());
 vi.mock('node:dns/promises', () => ({ lookup }));
@@ -16,101 +21,6 @@ vi.mock('node:dns/promises', () => ({ lookup }));
 afterEach(() => {
   vi.restoreAllMocks();
   lookup.mockReset();
-});
-
-/** What `new URL(...).hostname` yields for each of these, brackets included. */
-function hostnameOf(url: string): string {
-  return new URL(url).hostname;
-}
-
-describe('internalHostKind', () => {
-  it.each([
-    // Plain literals — the cases the original guard already caught.
-    ['http://127.0.0.1/feed', 'loopback'],
-    ['http://127.42.9.1/feed', 'loopback'],
-    ['http://0.0.0.0/feed', 'loopback'],
-    ['http://localhost:8080/feed', 'loopback'],
-    ['http://admin.localhost/feed', 'loopback'],
-    ['http://[::1]/feed', 'loopback'],
-    ['http://[::]/feed', 'loopback'],
-    ['http://169.254.169.254/latest/meta-data/', 'link-local'],
-    ['http://[fe80::1]/feed', 'link-local'],
-    ['http://[febf::1]/feed', 'link-local'],
-    // The reported bypass: IPv4-mapped IPv6, which URL rewrites into hex.
-    ['http://[::ffff:127.0.0.1]/feed', 'loopback'],
-    ['http://[::ffff:169.254.169.254]/latest/meta-data/', 'link-local'],
-    ['http://[0:0:0:0:0:ffff:7f00:1]/feed', 'loopback'],
-    // IPv4-compatible, IPv4-translated and the well-known NAT64 prefix, which
-    // carry an IPv4 address the same way.
-    ['http://[::127.0.0.1]/feed', 'loopback'],
-    ['http://[::ffff:0:169.254.169.254]/feed', 'link-local'],
-    ['http://[64:ff9b::169.254.169.254]/feed', 'link-local'],
-    // A trailing root label is the same name, and was a second way past the
-    // string comparison.
-    ['http://localhost./feed', 'loopback'],
-    ['http://LOCALHOST/feed', 'loopback'],
-  ])('classifies %s as %s', (url, kind) => {
-    expect(internalHostKind(hostnameOf(url))).toBe(kind);
-  });
-
-  it.each([
-    // Private LAN stays allowed on purpose: a self-hosted FreshRSS subscribes
-    // to feeds on its own network, and refusing that breaks the normal case.
-    'http://192.168.1.50/rss.xml',
-    'http://10.0.0.5/rss.xml',
-    'http://172.16.4.4/rss.xml',
-    'http://[fc00::1]/rss.xml',
-    'http://[fec0::1]/rss.xml',
-    'https://news.example.com/rss',
-    'https://1.1.1.1/rss',
-    'https://[2606:4700::1111]/rss',
-    'https://127.0.0.1.example.com/rss',
-    'https://notlocalhost/rss',
-  ])('leaves %s alone', (url) => {
-    expect(internalHostKind(hostnameOf(url))).toBeNull();
-  });
-
-  // `URL` always hands over the compressed hex form, but the classifier is
-  // exported and takes a hostname from anywhere — including a DNS answer, which
-  // is where the dotted-quad spellings actually arrive.
-  it.each([
-    ['::ffff:127.0.0.1', 'loopback'],
-    ['::ffff:169.254.169.254', 'link-local'],
-    ['::127.0.0.1', 'loopback'],
-    ['0:0:0:0:0:ffff:a9fe:a9fe', 'link-local'],
-    ['[::ffff:127.0.0.1]', 'loopback'],
-    ['FE80::1', 'link-local'],
-  ])('classifies the bare literal %s as %s', (host, kind) => {
-    expect(internalHostKind(host)).toBe(kind);
-  });
-
-  it.each([
-    '::ffff:1.1.1.1',
-    '2606:4700:4700::1111',
-    'not a host at all',
-    '',
-    '1:2:3:4:5:6:7:8:9',
-  ])('leaves the bare literal %j alone', (host) => {
-    expect(internalHostKind(host)).toBeNull();
-  });
-});
-
-describe('metadata endpoints and scope ids', () => {
-  it.each([
-    ['100.100.100.200', 'link-local'],
-    ['192.0.0.192', 'link-local'],
-  ])('refuses the metadata endpoint %s', (host, kind) => {
-    expect(internalHostKind(host)).toBe(kind);
-  });
-
-  it.each([
-    ['::ffff:127.0.0.1%lo', 'loopback'],
-    ['::ffff:169.254.169.254%eth0', 'link-local'],
-    ['fe80::1%eth0', 'link-local'],
-    ['::%lo', 'loopback'],
-  ])('reads %s despite the scope id', (host, kind) => {
-    expect(internalHostKind(host)).toBe(kind);
-  });
 });
 
 describe('assertRoutableHosts', () => {
@@ -131,6 +41,15 @@ describe('assertRoutableHosts', () => {
     ).rejects.toThrow(/link-local/);
   });
 
+  it('names the address rather than the hostname in the refusal', async () => {
+    // An operator reading the message has to be able to tell why: the name
+    // looked ordinary, and it was the record behind it that was not.
+    lookup.mockResolvedValue([{ address: '169.254.169.254', family: 4 }]);
+    await expect(
+      assertRoutableHosts(['feed.attacker.example'])
+    ).rejects.toThrow(/169\.254\.169\.254/);
+  });
+
   it('allows a name that resolves to a routable address', async () => {
     lookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
     await expect(
@@ -139,6 +58,9 @@ describe('assertRoutableHosts', () => {
   });
 
   it('allows a name it cannot resolve, which FreshRSS may still reach', async () => {
+    // Fail-open on purpose: the FreshRSS server may sit in a different network
+    // with its own resolver. SECURITY.md says so, and this is the test that
+    // keeps it true.
     lookup.mockRejectedValue(
       Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' })
     );
@@ -149,7 +71,8 @@ describe('assertRoutableHosts', () => {
 
   it('does not read a sinkholed name as loopback', async () => {
     // Every ad blocker answers 0.0.0.0 for a blocked domain. That is the
-    // resolver declining, not the name addressing the FreshRSS host.
+    // resolver declining, not the name addressing the FreshRSS host — reading
+    // it as loopback would make every blocklisted domain unsubscribable.
     lookup.mockResolvedValue([{ address: '0.0.0.0', family: 4 }]);
     await expect(
       assertRoutableHosts(['ads.example.com'])
@@ -180,5 +103,25 @@ describe('assertRoutableHosts', () => {
       'b.example.com',
     ]);
     expect(lookup).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops resolving once one host has been refused', async () => {
+    // The reason this needs mcp-internal-hosts 0.2.0 rather than 0.1.0. An OPML
+    // document may name thousands of feeds; if an early one points at
+    // 127.0.0.1 the answer is already known, and resolving the rest would spend
+    // the whole ten-second budget to arrive at the same refusal.
+    lookup.mockImplementation(async (name: string) =>
+      name === 'bad.example.com'
+        ? [{ address: '127.0.0.1', family: 4 }]
+        : [{ address: '93.184.216.34', family: 4 }]
+    );
+    const many = [
+      'bad.example.com',
+      ...Array.from({ length: 200 }, (_, i) => `feed${i}.example.com`),
+    ];
+    await expect(assertRoutableHosts(many)).rejects.toThrow(/loopback/);
+    // The batch already in flight finishes, so this is not exactly one — but it
+    // is the first batch rather than all two hundred names.
+    expect(lookup.mock.calls.length).toBeLessThanOrEqual(8);
   });
 });

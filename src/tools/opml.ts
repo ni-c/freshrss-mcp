@@ -1,16 +1,14 @@
 import { z } from 'zod';
-
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { untrustedFields } from '../output-schema.js';
+import type { McpServer } from '@modelcontextprotocol/server';
+import { setResourceKey } from 'mcp-approval';
+import type { Approver, ConfirmationStore } from 'mcp-approval';
 
 import { SLOW_REQUEST_TIMEOUT_MS, type FreshRssApi } from '../api.js';
-import {
-  confirmationPrompt,
-  setResourceKey,
-  type ConfirmationStore,
-} from '../confirm.js';
+import { READ_ONLY } from './annotations.js';
 import { assertRoutableHosts } from '../hosts.js';
 import { redactOpmlCredentials, redactUrlCredentials } from '../redact.js';
-import { errorResult, run, textResult, ToolInputError } from '../result.js';
+import { errorResult, ownWordsResult, run, ToolInputError } from '../result.js';
 import { UNTRUSTED_CONTENT_NOTE } from '../shape.js';
 
 /** Characters of OPML returned to the model. */
@@ -34,8 +32,24 @@ export function registerOpmlReadTools(
       description:
         'Exports all subscriptions as an OPML document — the portable backup format for ' +
         'feed readers. For a readable overview of the subscriptions use list_feeds instead.',
-      inputSchema: {},
-      annotations: { readOnlyHint: true },
+      inputSchema: z.object({}),
+      annotations: READ_ONLY,
+      // The document goes in a field. A schema whose root is a string is
+      // served to a 2025-era client rewritten as `{result: …}`, so the tool
+      // would answer in two shapes depending on who asked.
+      outputSchema: z.object({
+        ...untrustedFields,
+        opml: z
+          .string()
+          .describe('XML. Credentials in feed URLs are redacted.'),
+        truncated: z
+          .object({
+            shown: z.number().int(),
+            total: z.number().int(),
+            note: z.string(),
+          })
+          .optional(),
+      }),
     },
     async () =>
       run(async () => {
@@ -45,13 +59,38 @@ export function registerOpmlReadTools(
           await api.getText('/subscription/export')
         );
         const truncated = opml.length > MAX_EXPORT_CHARS;
-        return textResult(
-          `${UNTRUSTED_CONTENT_NOTE}\n\n` +
-            (truncated
-              ? `${opml.slice(0, MAX_EXPORT_CHARS)}\n\n(truncated at ${MAX_EXPORT_CHARS} characters; ` +
-                'use list_feeds for a complete overview of the subscriptions)'
-              : opml)
-        );
+        const shown = truncated ? opml.slice(0, MAX_EXPORT_CHARS) : opml;
+        // The document goes in a field rather than being the result: a schema
+        // whose root is a string is served to a 2025-era client rewritten as
+        // `{result: …}`, so the tool would answer in two shapes depending on
+        // who asked — and `truncated` needs somewhere to live either way.
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                `${UNTRUSTED_CONTENT_NOTE}\n\n` +
+                (truncated
+                  ? `${shown}\n\n(truncated at ${MAX_EXPORT_CHARS} characters; ` +
+                    'use list_feeds for a complete overview of the subscriptions)'
+                  : opml),
+            },
+          ],
+          structuredContent: {
+            untrusted: true as const,
+            source: 'freshrss' as const,
+            opml: shown,
+            ...(truncated
+              ? {
+                  truncated: {
+                    shown: shown.length,
+                    total: opml.length,
+                    note: 'Use list_feeds for a complete overview of the subscriptions.',
+                  },
+                }
+              : {}),
+          },
+        };
       })
   );
 }
@@ -77,7 +116,7 @@ function assertNoDoctype(opml: string): void {
   }
 }
 
-/** Hostnames named in the confirmation prompt before the rest is counted. */
+/** Hostnames listed on the prompt's caller-supplied line before the rest is dropped. */
 const PROMPTED_HOSTS = 8;
 
 /** The attribute names FreshRSS turns into a server-side fetch. */
@@ -364,19 +403,45 @@ function withUtf8Declaration(opml: string): string {
   return declaration + body.slice(end);
 }
 
+/**
+ * How much of the document's reach fits in the server's own sentence: a count.
+ *
+ * The names themselves are the caller's words and belong on a `details` line —
+ * see the call site. Note that this is the only figure here that a document
+ * cannot inflate, which is the point of it being the only one in `what`.
+ */
 function describeHosts(hosts: string[]): string {
   if (hosts.length === 0) return 'no feed URLs';
-  const named = hosts.slice(0, PROMPTED_HOSTS).join(', ');
-  const rest = hosts.length - PROMPTED_HOSTS;
-  return rest > 0
-    ? `feeds on ${named} and ${rest} more host(s)`
-    : `feeds on ${named}`;
+  return `feeds on ${hosts.length} host(s)`;
+}
+
+/**
+ * The host names, as a line the approval library treats as caller input.
+ *
+ * They must not go into the `what` sentence. `URL.hostname` carries no length
+ * limit — IDNA is applied with `VerifyDnsLength=false`, so a single label of
+ * five thousand characters parses and survives — and a document naming eight of
+ * them would put tens of thousands of characters of attacker-written, readable
+ * prose into the question the dialog asks, ahead of the consequence line, which
+ * every renderer would then push out of view. As a detail they go through the
+ * library's `flatten`: collapsed to one line, capped at 200 characters, and
+ * printed under "Values below are supplied by the caller".
+ *
+ * Sliced before the join so that a document naming thousands of hosts does not
+ * build a megabyte of string for `flatten` to cut down to 200 characters.
+ */
+function hostDetails(hosts: string[]): { label: string; value: string }[] {
+  if (hosts.length === 0) return [];
+  return [
+    { label: 'feed hosts', value: hosts.slice(0, PROMPTED_HOSTS).join(', ') },
+  ];
 }
 
 export function registerOpmlWriteTools(
   server: McpServer,
   api: FreshRssApi,
-  confirmations: ConfirmationStore
+  confirmations: ConfirmationStore,
+  approval: Approver
 ): void {
   server.registerTool(
     'import_opml',
@@ -388,16 +453,25 @@ export function registerOpmlWriteTools(
         'no bulk undo; every feed would have to be removed individually. Two-step: the ' +
         'first call returns a confirmation token, the second call with that token performs ' +
         'the import.',
-      inputSchema: {
+      inputSchema: z.object({
         opml: z.string().min(1).describe('OPML document'),
         confirm_token: z
           .string()
           .optional()
           .describe('Token from the first call of this tool'),
+      }),
+      annotations: {
+        // Destructive: FreshRSS merges the document into the existing
+        // subscriptions and the result cannot be separated back out. Each
+        // import fetches every feed named in it.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
       },
-      annotations: { destructiveHint: true },
+      outputSchema: z.object({ imported: z.literal(true), note: z.string() }),
     },
-    async ({ opml, confirm_token }) =>
+    async ({ opml, confirm_token }, mcp) =>
       run(async () => {
         if (opml.length > MAX_IMPORT_CHARS) {
           throw new ToolInputError(
@@ -416,23 +490,35 @@ export function registerOpmlWriteTools(
         // not authorise importing a different, larger one.
         const resource = setResourceKey('import_opml', [opml]);
 
-        if (!confirmations.consume(resource, confirm_token)) {
-          if (confirm_token !== undefined) {
-            return errorResult(
-              'The confirmation token is invalid, expired or was issued for a different ' +
-                'document. Call import_opml without a token to get a new one.'
-            );
+        const outlines = (document.match(/<outline\b/gi) ?? []).length;
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what:
+              `import an OPML document with ${outlines} outline element(s), ` +
+              `subscribing to ${describeHosts(hosts)} and refreshing all feeds afterwards`,
+            consequence:
+              'Every feed in the document is subscribed to at once, and FreshRSS ' +
+              'fetches each of them. Unsubscribing afterwards is one call per feed.',
+            details: hostDetails(hosts),
+            resourceKey: resource,
+            token: confirm_token,
+            toolName: 'import_opml',
+            hint: 'Tick to go ahead, leave it to cancel.',
           }
-          const outlines = (document.match(/<outline\b/gi) ?? []).length;
-          return textResult(
-            confirmationPrompt(
-              `import an OPML document with ${outlines} outline element(s), subscribing to ` +
-                `${describeHosts(hosts)} and refreshing all feeds afterwards`,
-              confirmations.issue(resource),
-              confirmations.ttlMinutes
-            )
-          );
+        );
+        // A token that was sent and did not match is refused with the reason
+        // rather than answered with a fresh prompt; the sentence is the
+        // library's, so every server refuses in the same words.
+        if (outcome.decision === 'rejected') {
+          return errorResult(outcome.reason);
         }
+        if (outcome.decision === 'declined') {
+          return errorResult(`The user declined. import_opml did nothing.`);
+        }
+        if (outcome.decision === 'pending') return outcome.result;
 
         // The checked document, not the one that came in: the two differ exactly
         // where a URL parser and FreshRSS's fetcher would have disagreed.
@@ -447,9 +533,10 @@ export function registerOpmlWriteTools(
             `FreshRSS did not confirm the import; it answered: ${body.trim().slice(0, 200)}`
           );
         }
-        return textResult(
-          'OPML imported. Call list_feeds to see the resulting subscriptions.'
-        );
+        return ownWordsResult({
+          imported: true,
+          note: 'Call list_feeds to see the resulting subscriptions.',
+        });
       })
   );
 }

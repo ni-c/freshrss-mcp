@@ -10,6 +10,206 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- #region changelog -->
 
+## [Unreleased]
+
+### Added
+
+- Every tool declares an `outputSchema` and answers with `structuredContent`
+  beside the text block. A client no longer has to parse prose to use a result —
+  which six of them made unavoidable, since they answered with a sentence. The
+  sentence stays, in the text block.
+
+  Every tool that reports feed content carries `untrusted: true` and
+  `source: "freshrss"` as fields. This server has always said so in `notes`,
+  which is prose in a list: a client can read it and cannot check it. Eight
+  tools are without the marker, because their answer is entirely this server's
+  own words — ids it was given, a sentence built from the arguments, the account
+  it authenticates as.
+
+### Changed
+
+- The advertised schemas avoid spellings that are legal JSON Schema and still
+  get a tool refused, or its constraint silently dropped, by some MCP clients:
+  an open object now writes `"additionalProperties": true` rather than the
+  empty schema `{}` zod emits for it; and a value that was left untyped is
+  declared as what it really is. What the tools accept and return is unchanged;
+  only the way the schema says so is.
+
+- `export_opml` answers `{opml}` instead of the document as the whole result. A
+  schema whose root is a string is served to a 2025-era client rewritten as
+  `{result: …}`, so the tool would have answered in two shapes depending on
+  which revision the client spoke — and `truncated` now has somewhere to live.
+
+- A result too large even after article content is dropped is now an error. It
+  used to answer with the JSON cut at the ceiling, which a text block tolerates
+  and `structuredContent` cannot.
+
+- The two-call `confirm_token` prompt is an error result. What was asked for did
+  not happen, which is what `isError` says. The text is unchanged and still
+  carries the token.
+
+### Added
+
+- The four tools that need a confirmation now **ask the user**, on clients that
+  can show a prompt: `unsubscribe_feed`, `mark_all_as_read`,
+  `delete_category_or_label` and `import_opml`. The two-call `confirm_token`
+  remains for clients that cannot, so nothing that works today stops working —
+  but where a person can be asked, one is, instead of a token that only proves
+  the same call was made twice.
+
+- Each of those prompts now says what will be lost, which three of the four
+  never did: FreshRSS keeps no record of which articles were unread, a feed takes
+  its stored articles with it, and a deleted category moves its feeds to the
+  default rather than deleting them.
+
+- **`mark_articles` now asks too — but only when it is about to mark something
+  read.** It carries `destructiveHint: true` and went through unannounced, and
+  its own description claimed "All changes are reversible by calling this tool
+  again with the opposite value." Three of the four are. Which of those articles
+  were unread is not, and FreshRSS keeps no record of it — the same reason
+  `mark_all_as_read` is guarded, over a caller-named list instead of a whole
+  stream.
+
+  Starring, unstarring, labelling and marking _unread_ still go straight
+  through. Asking about a star toggle as well would be how people learn to tick
+  without reading. The approval is bound to the exact list of `article_ids`, so
+  one obtained for three articles does not execute against thirty.
+
+- `ELICITATION` switches the dialog off — `false` sends a client that could have
+  been asked down the two-call-token path instead. For a scheduled job or a test
+  harness, where a dialog is the wrong shape rather than an unwanted one.
+
+  It does **not** remove the guard: there is no setting in which a guarded call
+  goes unannounced. Two deliberate rough edges come with it. The variable is
+  **not prefixed**, so one `export ELICITATION=false` reaches every MCP server in
+  the environment — which is why a server started with it off prints a line
+  saying so, and why the fallback text names the server instead of blaming a
+  client that was working fine. And a value that is neither `true` nor `false`
+  **stops the server**: it is the only variable here that defaults to _on_, so
+  failing open on a typo would leave the dialog running while the operator
+  believed it was off. It is read after `FRESHRSS_API_PASSWORD` is wiped from the
+  environment, so that exit cannot leave the password behind.
+
+- A `docs/guide/approval.md` page.
+
+- `SECURITY.md` states what an approval binds — a decision to a request, not a
+  decision to a moment — why the freshness gap that leaves is unreachable on this
+  server today, and what would have to be built on the day it starts speaking
+  protocol revision `2026-07-28`.
+
+- The live suite now pins three refusals against a real FreshRSS as well as the
+  happy paths: the SSRF guard on `subscribe_feed` and on `import_opml`, each
+  asserted with its reason rather than with a bare "this failed", and a
+  read-only server registering no write tool.
+
+### Changed
+
+- A `confirm_token` that does not match its arguments is **refused with the
+  reason** instead of being answered with a fresh prompt, and the confirmation
+  prompt itself is a plain result rather than an error. Both are now the same in
+  every server of the family.
+
+- Runs on **MCP SDK 2.0**. Existing clients see the same protocol revision they
+  always did; the change is the package layout behind it, and it is what lets
+  the dialog above work on both protocol eras from one code path — including
+  behind a stateless gateway, where the older mechanism silently fell back to
+  the weaker token for every client.
+
+- The linter is **oxlint** instead of eslint plus typescript-eslint, which lifts
+  the TypeScript ceiling: typescript-eslint pins `typescript` below 6.1, so this
+  repository was held on TypeScript 6 by its linter rather than by its code.
+
+- The tool filter, the confirmation store, the host guard and the
+  documentation-asset generator now come from **`mcp-tool-allowlist`**,
+  **`mcp-approval`**, **`mcp-internal-hosts`** and **`svg-asset-set`** rather
+  than from copies kept here — 825 fewer lines, and one place to fix each. None
+  of them has a runtime dependency of its own.
+
+  The SSRF guard is the notable one: what leaves is the classification and the
+  resolving, including the two rules this repository contributed upstream — a
+  resolver answering `0.0.0.0` is declining rather than pointing at the fetching
+  host, and a name that does not resolve is passed on. What stays is the
+  refusal, in FreshRSS's own words. The behaviour is unchanged, and
+  `import_opml` now stops resolving as soon as one host is refused instead of
+  spending the whole ten-second budget to reach the same answer.
+
+- The shared libraries move to `mcp-approval` 0.7.1, `mcp-tool-allowlist` 0.2.1,
+  `mcp-internal-hosts` 0.2.1, `mcp-integration-harness` 0.2.0 and
+  `svg-asset-set` 0.2.0.
+
+- stdio is served through `serveStdio`, so the connection's era is negotiated
+  on the opening exchange rather than assumed. A client that pins the
+  `2026-07-28` era is served it; until now its `server/discover` probe was
+  answered with "Method not found" and only `2025-11-25` was on offer. A client
+  that speaks the older era sees no change — it is still pinned to one instance
+  for the life of the connection, exactly as a hand-wired
+  `StdioServerTransport` served it.
+
+### Fixed
+
+- **A feed could stall the server with an article body that shows nothing.**
+  Markup was removed with `replace(/<[^>]+>/g, '')` inside a loop that repeated
+  until the text stopped changing. Every `<` with no `>` behind it made `[^>]+`
+  run to the end of the input and then backtrack a character at a time, so an
+  article could buy quadratic work with linear bytes — measured at 8.8 seconds
+  per article for 122 048 bare `<a`s, 40 seconds for a body of bare `<`s, on the
+  single thread that also serves every other request. The reachable form of it
+  needs no invalid markup at all: `&lt;a` repeated is escaped _text_, which
+  nothing on the FreshRSS or SimplePie path has reason to touch, and the
+  conversion decodes entities between its two passes.
+
+  The conversion is now a single left-to-right scan: at a `<` it looks for the
+  `>` that closes it, discards the span, and never re-reads what it deleted. The
+  repeat-until-stable loop is gone with it — a scan cannot splice `<scr<script>`
+  into a new tag, because it reads the fragment and the tag that follows it in
+  one direction, which is what a browser's tokeniser does with the same bytes.
+  The same payloads now take single-digit milliseconds.
+
+- **The response budget is charged for the markup read, not the text returned.**
+  This was the amplifier under the entry above: a body that strips away to
+  nothing produced no output, so nothing was debited, the budget stayed whole,
+  and every one of the up to 100 articles in the same `list_articles` response
+  was handed a full slice again. An article that fills its slice now costs the
+  per-article limit it was given, whatever came out — which is what the README
+  claimed of the budget all along.
+
+- **A feed password containing an `@` was published in half.** The redaction
+  matched up to the _first_ `@`, but userinfo ends at the last one before the
+  path, and FreshRSS does not percent-encode the password it stores. A feed
+  stored as `https://alice:p@ssw0rd@rss.example/feed` came back as
+  `https://***@ssw0rd@rss.example/feed` from `list_feeds` and the OPML export —
+  the exact disclosure the redaction exists to prevent. `https://host/users/@alice`
+  is still left alone.
+
+- **A hostname can no longer crowd out the `import_opml` confirmation dialog.**
+  The hosts an OPML document points at were interpolated into the server's own
+  question. `URL.hostname` has no length limit — IDNA is applied with
+  `VerifyDnsLength=false`, so a single 5 000-character label parses and survives
+  — so eight of them put tens of thousands of characters of readable,
+  attacker-written text into the question, ahead of the consequence line, which
+  every renderer would then push out of view. The question now states how many
+  hosts there are; the names go on the caller-supplied line, where the approval
+  library flattens and caps them.
+
+- **`FRESHRSS_READ_ONLY` is read tolerantly, as a protection switch should be.**
+  It was compared with `=== 'true'`, so `=1`, `=yes`, `=TRUE` or a trailing space
+  started a server with every write tool registered and said nothing about it —
+  the operator asked for the guard and had no way to learn they had not been
+  given one. `1`, `true` and `yes` now all switch it on, in any casing, with
+  surrounding whitespace ignored. `FRESHRSS_INSECURE_TLS` stays strict on
+  purpose: that one _lifts_ a protection, so a value nobody spelled exactly has
+  to leave certificate validation on.
+
+- Confirmation tokens are compared with a **constant-time** comparison. The copy
+  in this repository used `!==`, which leaks through timing how much of a guess
+  was right. Reaching a token still requires having received it in a previous
+  tool result, so this closes a margin rather than a hole.
+
+- An entry in `FRESHRSS_ALLOW_TOOLS` that is not tool-name-shaped is now
+  **redacted** in the error rather than quoted back. `FRESHRSS_API_PASSWORD` and
+  `FRESHRSS_ALLOW_TOOLS` are adjacent lines in every compose file, and a paste
+  into the wrong one used to print the credential into the client's log.
+
 ## [0.2.0] - 2026-08-27
 
 ### Added

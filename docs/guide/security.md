@@ -24,32 +24,47 @@ So:
   decoded, and raw control characters — ANSI escape sequences in particular —
   stripped.
 
-## Confirmation tokens
+## The confirmation, honestly
 
-Four tools take a two-step path. The first call returns a single-use token, the
-second call must carry it:
+Five operations ask a person before they act:
 
 - `mark_all_as_read`
 - `unsubscribe_feed`
 - `delete_category_or_label`
 - `import_opml`
+- `mark_articles`, but **only when `read: true`**
 
-The token is a random 16-byte nonce, valid for five minutes, and **bound to the
-target**. For `import_opml` it is bound to a SHA-256 fingerprint of the exact
-document, so confirming a small OPML cannot authorise importing a different, larger
-one.
+Where the MCP client supports elicitation, the question is a **dialog** shown to
+whoever is sitting there. The model cannot answer it on their behalf, and until
+an answer comes back nothing happens.
 
 A plain `confirm: true` parameter would not do: the model can set it on the first
-call, and text hidden in a feed can talk it into doing so. A token that only ever
-appeared in a *previous* tool result cannot be guessed.
+call, and text hidden in a feed can talk it into doing so.
 
-::: info Why mark_articles is not gated
-`mark_articles` writes but takes no token. The caller names each of at most 100
-articles explicitly, and every field it sets — read, starred, labels — can be set
-back. Gating the primary triage tool would make ordinary use painful for little
-gain. It does declare `destructiveHint`, so a client may still prompt; what is not
-recoverable is the *prior* per-article state.
+Where the client cannot show a dialog, the tool falls back to a random 16-byte
+token, valid for five minutes, that only ever appears in a *previous* tool
+result. Be clear about what that proves, because this server is: **the call was
+made twice with the same arguments, and nothing more.** A model can read the
+token out of the first result and quote it back in the same turn. The fallback
+text says so rather than implying somebody approved, and names whether it was the
+client that could not be asked or the operator who switched the dialog off with
+`ELICITATION=false`.
+
+Either way the approval is **bound to the target**. For `import_opml` that is a
+SHA-256 fingerprint of the exact document, so confirming a small OPML cannot
+authorise importing a different, larger one; for `mark_articles` it is the exact
+list of article ids.
+
+::: info Why `mark_articles` asks about one field and not the others
+Starring, unstarring, labelling and marking *unread* all set a field that can be
+set back, and asking about a star toggle would be how people learn to tick
+without reading. Marking read destroys **which** of those articles were unread,
+and FreshRSS keeps no record of that — the same reason `mark_all_as_read` is
+guarded, over a caller-named list instead of a whole stream.
 :::
+
+See [Asking a person](/guide/approval) for what the dialog contains, which
+clients show one, and what `ELICITATION=false` does and does not change.
 
 ## Credentials in feed URLs
 

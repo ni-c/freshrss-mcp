@@ -1,4 +1,4 @@
-import { internalHostKind } from './hosts.js';
+import { internalHostKind } from 'mcp-internal-hosts';
 import { redactUrlCredentials } from './redact.js';
 
 export interface Config {
@@ -17,7 +17,15 @@ export interface Config {
    */
   apiPassword: string | undefined;
   insecureTls: boolean;
-  readOnly: boolean; /**
+  readOnly: boolean;
+  /**
+   * Whether a client that *can* show a dialog is asked before a guarded tool
+   * acts. `ELICITATION=false` turns the dialog off — the guard stays and falls
+   * back to the two-call token, so there is no setting in which a guarded call
+   * goes unannounced.
+   */
+  elicitation: boolean;
+  /**
    * Raw value of `FRESHRSS_ALLOW_TOOLS` — comma-separated tool names, `list_*`
    * prefixes, or `essential`. Kept unparsed on purpose: this file is a mirror of
    * the environment, and the names can only be checked against the tool
@@ -52,6 +60,50 @@ export function missingConfigKeys(config: Config): string[] {
 }
 
 /**
+ * Reads `ELICITATION` — deliberately unprefixed, and deliberately fatal on
+ * anything it does not recognise.
+ *
+ * Unprefixed: environment variables are process-wide, so this is one switch for
+ * every server in the same environment. That is also its risk, which is why a
+ * server started with it off says so on its startup line.
+ *
+ * Fatal: this is the first variable of the family that defaults to *on*. The
+ * others fail open on a typo, which is the safe direction for them. Here a typo
+ * would leave the dialog running while the operator believes it is off — and an
+ * operator who believes that has no way to find out.
+ */
+export function parseElicitation(raw: string | undefined): boolean {
+  const value = raw?.trim().toLowerCase();
+  if (value === undefined || value === '' || value === 'true') return true;
+  if (value === 'false') return false;
+  console.error(
+    `freshrss-mcp: ELICITATION must be "true" or "false" — got "${raw}". ` +
+      'Refusing to start rather than guess.'
+  );
+  process.exit(1);
+}
+
+/**
+ * Reads a switch that turns a protection *on*, and reads it tolerantly.
+ *
+ * `FRESHRSS_READ_ONLY=1` in a Docker Compose file, `=yes` from a shell script,
+ * `=TRUE` from a Windows environment, a trailing space from a copied `.env`
+ * line: an `=== 'true'` comparison answers all four with a server that quietly
+ * exposes every write tool. The operator asked for the guard and does not find
+ * out that they did not get it — which is exactly the failure a protection
+ * switch must not have.
+ *
+ * The direction is what decides the strictness, not the variable. A switch that
+ * *lifts* a protection is compared strictly, so that a typo leaves the
+ * protection in place; see `FRESHRSS_INSECURE_TLS` above. `ELICITATION` is the
+ * third case and refuses to start at all, because its default is on and a typo
+ * there would be silent in both directions.
+ */
+function isEnabled(raw: string | undefined): boolean {
+  return /^(1|true|yes)$/i.test(raw?.trim() ?? '');
+}
+
+/**
  * Reads the configuration from environment variables.
  *
  * Missing credentials are only a warning, not a fatal error: the server must be
@@ -63,8 +115,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const url = env.FRESHRSS_URL;
   const user = env.FRESHRSS_USER;
   const apiPassword = env.FRESHRSS_API_PASSWORD;
+  // Strict, and right to be: this one *removes* a protection, so anything the
+  // operator did not spell exactly has to leave certificate checking on.
   const insecureTls = env.FRESHRSS_INSECURE_TLS === 'true';
-  const readOnly = env.FRESHRSS_READ_ONLY === 'true';
+  const readOnly = isEnabled(env.FRESHRSS_READ_ONLY);
   const allowTools = env.FRESHRSS_ALLOW_TOOLS;
   const denyTools = env.FRESHRSS_DENY_TOOLS;
 
@@ -82,6 +136,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // visible to child processes and in /proc/<pid>/environ.
   delete env.FRESHRSS_API_PASSWORD;
 
+  // After the delete, deliberately: this one can exit the process, and an exit
+  // above would leave the credential in the environment for whatever runs next.
+  const elicitation = parseElicitation(env.ELICITATION);
+
   if (!url) {
     return {
       url: undefined,
@@ -89,6 +147,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       apiPassword,
       insecureTls,
       readOnly,
+      elicitation,
       allowTools,
       denyTools,
     };
@@ -133,6 +192,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     apiPassword,
     insecureTls,
     readOnly,
+    elicitation,
     allowTools,
     denyTools,
   };
