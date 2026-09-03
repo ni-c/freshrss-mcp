@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { notes, untrustedFields } from '../output-schema.js';
+import { notes, record, untrustedFields } from '../output-schema.js';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { setResourceKey } from 'mcp-approval';
 import type { Approver, ConfirmationStore } from 'mcp-approval';
@@ -37,8 +37,8 @@ export function registerTagReadTools(
       annotations: READ_ONLY,
       outputSchema: z.object({
         ...untrustedFields,
-        categories: z.array(z.looseObject({})),
-        labels: z.array(z.looseObject({})),
+        categories: z.array(record),
+        labels: z.array(record),
         specialStreams: z.array(z.string()),
         notes,
       }),

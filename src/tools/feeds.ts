@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { feed, notes, untrustedFields } from '../output-schema.js';
+import { feed, notes, record, untrustedFields } from '../output-schema.js';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { setResourceKey } from 'mcp-approval';
 import type { Approver, ConfirmationStore } from 'mcp-approval';
@@ -152,9 +152,9 @@ export function registerFeedReadTools(
       outputSchema: z.object({
         ...untrustedFields,
         totalUnread: z.number(),
-        feeds: z.array(z.looseObject({})),
+        feeds: z.array(record),
         categoriesAndLabels: z
-          .array(z.looseObject({}))
+          .array(record)
           .describe('FreshRSS reports categories and user labels alike here.'),
         notes,
       }),
