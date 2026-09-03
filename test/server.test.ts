@@ -11,6 +11,7 @@ import {
   tokenOf,
   type Routes,
 } from './harness.js';
+import { expectPortableToolSchemas } from 'mcp-integration-harness';
 
 const READ_TOOLS = [
   'get_user_info',
@@ -86,6 +87,16 @@ describe('tool registration', () => {
       // rewritten to `{result: …}` — which is why export_opml answers `{opml}`.
       expect(tool.outputSchema?.type, tool.name).toBe('object');
     }
+  });
+
+  it('advertises schemas every client can read', async () => {
+    // Legal JSON Schema is not enough. `{}` in a schema position — what zod
+    // writes for `looseObject`, `catchall` and `z.unknown()` — and `type` as an
+    // array are both refused, or silently dropped, by some clients. Neither is
+    // a contract: each has an equivalent spelling that says the same thing, so
+    // there is nothing here to excuse.
+    const { tools } = await (await connect()).listTools();
+    expectPortableToolSchemas(tools);
   });
 
   it('marks every result built from feed content as untrusted', async () => {
