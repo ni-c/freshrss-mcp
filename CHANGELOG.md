@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- #region changelog -->
 
-## [Unreleased]
+## [0.3.0] - 2026-09-03
 
 ### Added
 
@@ -25,30 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tools are without the marker, because their answer is entirely this server's
   own words — ids it was given, a sentence built from the arguments, the account
   it authenticates as.
-
-### Changed
-
-- The advertised schemas avoid spellings that are legal JSON Schema and still
-  get a tool refused, or its constraint silently dropped, by some MCP clients:
-  an open object now writes `"additionalProperties": true` rather than the
-  empty schema `{}` zod emits for it; and a value that was left untyped is
-  declared as what it really is. What the tools accept and return is unchanged;
-  only the way the schema says so is.
-
-- `export_opml` answers `{opml}` instead of the document as the whole result. A
-  schema whose root is a string is served to a 2025-era client rewritten as
-  `{result: …}`, so the tool would have answered in two shapes depending on
-  which revision the client spoke — and `truncated` now has somewhere to live.
-
-- A result too large even after article content is dropped is now an error. It
-  used to answer with the JSON cut at the ceiling, which a text block tolerates
-  and `structuredContent` cannot.
-
-- The two-call `confirm_token` prompt is an error result. What was asked for did
-  not happen, which is what `isError` says. The text is unchanged and still
-  carries the token.
-
-### Added
 
 - The four tools that need a confirmation now **ask the user**, on clients that
   can show a prompt: `unsubscribe_feed`, `mark_all_as_read`,
@@ -103,6 +79,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read-only server registering no write tool.
 
 ### Changed
+
+- The advertised schemas avoid spellings that are legal JSON Schema and still
+  get a tool refused, or its constraint silently dropped, by some MCP clients:
+  an open object now writes `"additionalProperties": true` rather than the
+  empty schema `{}` zod emits for it; and a value that was left untyped is
+  declared as what it really is. What the tools accept and return is unchanged;
+  only the way the schema says so is.
+
+- `export_opml` answers `{opml}` instead of the document as the whole result. A
+  schema whose root is a string is served to a 2025-era client rewritten as
+  `{result: …}`, so the tool would have answered in two shapes depending on
+  which revision the client spoke — and `truncated` now has somewhere to live.
+
+- A result too large even after article content is dropped is now an error. It
+  used to answer with the JSON cut at the ceiling, which a text block tolerates
+  and `structuredContent` cannot.
+
+- The two-call `confirm_token` prompt is an error result. What was asked for did
+  not happen, which is what `isError` says. The text is unchanged and still
+  carries the token.
 
 - A `confirm_token` that does not match its arguments is **refused with the
   reason** instead of being answered with a fresh prompt, and the confirmation
