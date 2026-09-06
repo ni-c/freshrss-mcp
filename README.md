@@ -1,6 +1,7 @@
 # freshrss-mcp
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ni-c/freshrss-mcp/ci.yml?branch=main&label=CI)](https://github.com/ni-c/freshrss-mcp/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ni-c/freshrss-mcp/badge)](https://scorecard.dev/viewer/?uri=github.com/ni-c/freshrss-mcp)
 [![npm version](https://img.shields.io/npm/v/%40ni-c%2Ffreshrss-mcp)](https://www.npmjs.com/package/@ni-c/freshrss-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/%40ni-c%2Ffreshrss-mcp)](https://www.npmjs.com/package/@ni-c/freshrss-mcp)
 [![node](https://img.shields.io/node/v/%40ni-c%2Ffreshrss-mcp)](https://nodejs.org)
