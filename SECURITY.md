@@ -83,32 +83,33 @@ different one: confirming an import of a three-feed OPML document does not
 authorise importing another, because the exact document is what the key is built
 from.
 
-What a sealed state does not prove is **freshness**. "This answer belongs to this
-question" and "this answer has not been used already" are different properties, and
-only the first one exists. That gap is not reachable on this server today, and the
-reasons are worth writing down rather than rediscovering:
+A sealed state also proves **freshness**, since `mcp-approval` 0.8.1: "this answer
+belongs to this question" and "this answer has not been used already" are different
+properties, and the seal alone gives only the first. Each state therefore carries a
+nonce, spent the first time an answer arrives with it — accepted or declined — so
+the same state presented again counts as no answer and produces a fresh question.
+That matters here because this server speaks both protocol revisions:
 
-- **The dialog never leaves the process.** `src/index.ts` connects with
-  `server.connect(new StdioServerTransport())`, which pins the connection to
-  protocol revision `2025-11-25`. Asked for `2026-07-28`, with and without the
-  modern `_meta` envelope, this server still answers `2025-11-25`. On that revision
-  the SDK bridges the elicitation server-side inside the same `tools/call`: the
-  question goes out, the answer comes back, and the sealed state is never handed to
-  the caller. There is no artefact to keep, so there is nothing to replay.
+- **On `2025-11-25`** the SDK bridges the dialog server-side inside the same
+  `tools/call`: the question goes out, the answer comes back, and the sealed state
+  never reaches the caller. There is no artefact to keep.
+- **On `2026-07-28`** — which `serveStdio` in `src/index.ts` negotiates when the
+  client asks for it — there is no server→client channel, so the call returns
+  `input_required`, ends, and the client retries carrying the state and the
+  answer. That state is the artefact, and without the nonce the caller could
+  present the same approved answer again for as long as it lived, fifteen minutes
+  by default. `mark_all_as_read` without `older_than` has the same resource key
+  every time, so every such replay would have landed on whatever was new since.
 - **The token fallback is single-use by construction.** A matching token is spent
   as it is checked, and issuing a new one for the same resource key replaces any
   pending one. A second call carrying a spent token is refused. Its weakness is the
   different one stated above — it proves the call was made twice, not that a person
   saw it.
 
-**On the day this server speaks `2026-07-28`** — which means moving `src/index.ts`
-onto `serveStdio`, the entry point that lets the opening exchange select the era —
-the sealed state does travel, and a replay window opens with it: the caller then
-holds a state that stays valid for its whole lifetime and could present the same
-approved answer again for a second call with the same arguments. What would have to
-be built on that day is a record of spent states — the resource key together with a
-nonce from the state, kept until that state expires and checked before an answer is
-accepted, which is what the token store already does for tokens. None of it exists
-now, on purpose: an unreachable mechanism is one more thing that has to stay
-correct, and this paragraph is the reminder to build it at the moment it starts to
-matter.
+What remains is the shape both records share: they live in the process. A stdio
+server is spawned per session, so that is the flow's lifetime — but a restart
+between the two halves of a dialog forgets what was spent, and a state minted before
+it opens as if unseen, until it expires. The operation itself is the last line, and
+for the four guarded tools it is an acceptable one: an import or an unsubscribe run
+twice is the same end state, and a second mark-as-read reaches only what arrived in
+between.

@@ -10,9 +10,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- #region changelog -->
 
-## [Unreleased]
+## [0.3.1] - 2026-09-06
+
+### Fixed
+
+- **Article text conversion was quadratic on nested angle brackets.** The
+  fixpoint loop that 0.3.0's successor on `main` (#28) introduced to strip
+  markup until nothing changed peeled one `<>` per pass: a body of 120 000
+  characters of `<` took 53 seconds per article, on the single thread that
+  serves every other request, and any feed publisher could send it. Markup is
+  now stripped in one counted pass, with a separator emitted behind a `<` that
+  is kept as text whenever the thing after it is dropped — so no deletion can
+  assemble an element out of pieces that were not one, which is the property
+  the loop existed for. The same input takes four milliseconds. The property
+  test that found the original injection still holds; the escaped form of the
+  new shape is pinned beside the other linear-time cases.
+
+- **An approval could be replayed for fifteen minutes.** On protocol revision
+  `2026-07-28`, which `serveStdio` negotiates since 0.3.0's follow-up, the
+  sealed state travels through the client, and `mcp-approval` proved that an
+  answer belonged to its question but not that it had not been used already.
+  `mark_all_as_read` without `older_than` has the same resource key every
+  time, so every replay landed. `mcp-approval` 0.8.1 spends each state on its
+  first answer; `SECURITY.md` had described the gap as unreachable on the
+  grounds of a transport this server no longer uses, and now describes what
+  is enforced and what a restart still forgets.
+
+- **Response bodies from the instance are bounded.** Every answer was read
+  into memory whole; an instance — or whatever answers in its place under
+  `FRESHRSS_INSECURE_TLS` — that never stopped sending had no ceiling. Bodies
+  above 64 MiB are refused as they arrive, with the same "narrow the request"
+  error the result ceiling gives. A declared length above it is refused
+  before a byte is read.
+
+- **The write token was not refreshed on the 401 retry.** After an API
+  password change both cached tokens are stale; the retry re-logged in and
+  then resent the form it was first handed, old `T` included, so the first
+  write after a password change failed with a hint about wrong credentials.
+  The form is now built per attempt.
+
+- **Article and enclosure URLs skipped the credential redaction** that feed
+  URLs get. A publisher who serves a paid feed with the credentials in its
+  URLs tends to write the item links the same way; `url` and
+  `enclosures[].url` are now redacted like `feedUrl`.
+
+- **Text the instance wrote reaches the model bounded and marked.** The body
+  of an upstream error, `quickadd`'s `error`, an unexpected stream id and
+  the answer `expectOk` quotes are cut at 200 characters (2 000 for an error
+  body), stripped of control characters, and labelled as untrusted text from
+  the instance. Titles, authors and feed names lose their control characters
+  the way article bodies already did.
+
+- **`import_opml` passed on an absolute URL it could not parse.** A value
+  that names a scheme or an authority and still does not parse — a space in
+  the host, a port out of range — was treated like a relative one and left
+  for FreshRSS's fetcher to read its own way. It is now refused as malformed;
+  only a value with neither is left alone.
+
+- **Caller-supplied ids and lists are bounded.** An article id is at most
+  20 decimal or 16 hexadecimal digits, which is what a 64-bit FreshRSS id
+  is; `add_labels` and `remove_labels` take at most 50 names each.
+
+- `get_user_info` and `subscribe_feed` answered with the untrusted marker in
+  the text block while their output schema, which strips unknown fields,
+  removed it from `structuredContent`. Both are this server's own words and
+  now say the same thing in both channels.
+
+- `FRESHRSS_URL` is stored in its parsed form. A stray space around the
+  value, a query or a fragment used to be glued in front of the API path;
+  the origin and path are kept, the rest is dropped with a warning.
+
+- A bad `ELICITATION` value is echoed shortened and without control
+  characters, in case what was set was a line pasted into the wrong variable.
 
 ### Changed
+
+- `mcp-publisher` in the release and registry workflows is pinned to a
+  release and checked against its published checksum; the job holds an OIDC
+  token, so what it runs has to be what was reviewed.
+- A dependency review runs on every pull request, failing on a high-severity
+  advisory the change would introduce.
 
 - The tool reference marks the `essential` preset and the tools that ask a
   person before they act, per tool rather than only in the introduction. A test
@@ -41,7 +118,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file nobody could open. `dist/**/*.js` is unchanged; the package is about a
   fifth smaller.
 
-[Unreleased]: https://github.com/ni-c/freshrss-mcp/compare/v0.3.0...HEAD
+[0.3.1]: https://github.com/ni-c/freshrss-mcp/releases/tag/v0.3.1
 
 ## [0.3.0] - 2026-09-03
 
