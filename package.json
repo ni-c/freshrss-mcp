@@ -21,7 +21,7 @@
   "bugs": {
     "url": "https://github.com/ni-c/freshrss-mcp/issues"
   },
-  "homepage": "https://github.com/ni-c/freshrss-mcp#readme",
+  "homepage": "https://freshrss-mcp.ni-c.de",
   "funding": "https://github.com/sponsors/ni-c",
   "type": "module",
   "bin": {
