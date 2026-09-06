@@ -406,11 +406,27 @@ export function htmlToText(
   // Entities decode to whatever they name, angle brackets included, and that
   // happens once the tag pass is already over — so `&lt;script&gt;` in a feed
   // arrives as literal `<script>` unless the markup is taken out again
-  // afterwards. Decoding runs exactly once, so the second pass is the last one
-  // needed: doubly encoded text stays the text it is.
-  const stripped = stripMarkup(
-    stripMarkup(slice).replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, decodeEntity)
+  // afterwards. Decoding runs exactly once, so doubly encoded text stays the
+  // text it is.
+  //
+  // The stripping that follows runs to a fixpoint rather than exactly once, and
+  // a second pass genuinely is not enough. `stripMarkup` keeps a `<` that opens
+  // no element name, because "if x < y" is a comparison and feeds are full of
+  // them — but that kept `<` is emitted next to whatever follows the fragment
+  // it dropped, and the two can join into an element that was never in the
+  // input. `&lt;&lt;&gt;img src=x onerror=…&gt;` decoded to `<<>img src=x …>`,
+  // one pass dropped the `<>` and emitted the leading `<` as text, and the
+  // result was a live `<img src=x onerror=…>` that nothing looked at again.
+  // Each pass only removes, so the loop terminates.
+  let stripped = stripMarkup(slice).replace(
+    /&(#x?[0-9a-f]+|[a-z]+);/gi,
+    decodeEntity
   );
+  for (;;) {
+    const next = stripMarkup(stripped);
+    if (next === stripped) break;
+    stripped = next;
+  }
 
   const text = stripped
     // Raw control characters present in the source markup, not just the numeric
