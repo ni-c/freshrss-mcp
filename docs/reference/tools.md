@@ -60,6 +60,8 @@ that the credentials work.
 
 ### list_feeds
 
+**essential**
+
 No parameters. Every subscribed feed with `feedId`, `title`, `category`, `feedUrl`,
 `siteUrl`, `priority` and `unreadCount`, plus `feedCount` and `totalUnread`.
 
@@ -68,16 +70,22 @@ feed list is still returned, with a note and no `unreadCount`.
 
 ### list_categories
 
+**essential**
+
 No parameters. Returns `categories` and `labels` separately — FreshRSS distinguishes
 them by the tag type even though they share a namespace — each with an `unreadCount`,
 plus the names of the built-in streams.
 
 ### get_unread_counts
 
+**essential**
+
 No parameters. Unread totals per feed and per category, sorted by count, with
 `totalUnread`. Only entries that actually have unread articles are listed.
 
 ### list_articles
+
+**essential**
 
 Stream selector, plus:
 
@@ -100,6 +108,8 @@ or `content`. `since`/`until` also accept a bare unix timestamp.
 the selector and the date range, then filter what comes back.
 
 ### get_articles
+
+**essential**
 
 | Parameter | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -125,6 +135,8 @@ characters. For a readable overview use `list_feeds`.
 
 ### mark_articles 👤
 
+**essential**
+
 | Parameter | Type | Meaning |
 | --- | --- | --- |
 | `article_ids` | string[] (1–100) | Ids from `list_articles` |
@@ -141,6 +153,8 @@ cannot be recovered, and FreshRSS keeps no record of it. The approval is bound t
 exact list of `article_ids`. Takes `confirm_token` on the fallback path.
 
 ### mark_all_as_read 👤
+
+**essential**
 
 Stream selector, plus `older_than` (ISO date, default: all) and `confirm_token`.
 
