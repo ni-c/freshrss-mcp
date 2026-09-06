@@ -39,7 +39,9 @@ export interface Sandbox {
 }
 
 export async function bootstrap(
-  url = 'http://127.0.0.1:8081'
+  // Overridable for a second throwaway on another port — two suites on one
+  // machine must not share an instance, since each deletes what it made.
+  url = process.env.FRESHRSS_SANDBOX_URL ?? 'http://127.0.0.1:8081'
 ): Promise<Sandbox> {
   assertLoopback(url);
   await waitForHttp(url, { timeoutSeconds: 240 });

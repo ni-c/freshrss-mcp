@@ -3,7 +3,11 @@ import type {
   InputRequiredResult,
 } from '@modelcontextprotocol/server';
 
-import { FreshRssApiError } from './api.js';
+import {
+  FreshRssApiError,
+  ResponseTooLargeError,
+  upstreamText,
+} from './api.js';
 
 export function textResult(text: string): CallToolResult {
   return { content: [{ type: 'text', text }] };
@@ -106,16 +110,14 @@ const MAX_ERROR_BODY_LENGTH = 2000;
  */
 function sanitizeErrorBody(body: string): string {
   const trimmed = body.trim();
+  if (trimmed === '') return '';
   // Anything markup-shaped: a reverse proxy's error page or a WAF block page.
   // The check is deliberately loose — an XML declaration, a leading comment or
   // a doctype followed by a newline are all the same thing here.
   if (/^(<!doctype|<html[\s>]|<\?xml|<!--)/i.test(trimmed)) {
     return '(HTML error page omitted)';
   }
-  if (trimmed.length > MAX_ERROR_BODY_LENGTH) {
-    return `${trimmed.slice(0, MAX_ERROR_BODY_LENGTH)}… (truncated)`;
-  }
-  return trimmed;
+  return upstreamText(trimmed, MAX_ERROR_BODY_LENGTH);
 }
 
 function hintFor(status: number): string {
@@ -172,7 +174,8 @@ export async function run(
   } catch (error) {
     if (
       error instanceof ToolInputError ||
-      error instanceof ResultTooLargeError
+      error instanceof ResultTooLargeError ||
+      error instanceof ResponseTooLargeError
     ) {
       return errorResult(error.message);
     }

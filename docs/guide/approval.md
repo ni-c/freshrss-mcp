@@ -146,7 +146,9 @@ validate — so the state that ties an answer to its question is sealed (HMAC). 
 reply whose seal does not open, or opens onto a different target, counts as **no
 answer** and produces a fresh question rather than an error. The likeliest cause
 is not an attack: it is a gateway that put the server to sleep while the person
-was reading.
+was reading. A state is also **single-use**: it carries a nonce that is spent on
+the first answer, so the same approved answer cannot be presented a second time
+for the same call.
 
 If you run this behind [mcp-hub](https://github.com/ni-c/mcp-hub), the hub passes
 elicitation through in both directions; see its

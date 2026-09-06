@@ -1,0 +1,5 @@
+# DS-0026: no HEALTHCHECK instruction. This image runs an MCP server over stdio —
+# no port, no HTTP endpoint, nothing a health check could probe. The Dockerfile
+# says so next to the ENTRYPOINT. (Trivy's misconfiguration scanner only; the
+# CI image scan looks at packages, where nothing is ignored.)
+DS-0026

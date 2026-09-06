@@ -63,6 +63,28 @@ export interface RawUnreadCount {
   newestItemTimestampUsec?: string;
 }
 
+/**
+ * Raw control characters, which no title needs and a terminal would obey.
+ *
+ * The same class {@link htmlToText} removes from article bodies. A title, an
+ * author and a feed name come from the same publisher and reach the model
+ * through the same result, so they get the same treatment; tab and newline
+ * survive as the formatting they are.
+ */
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
+
+/** A publisher-written string, fit for a model: control characters removed. */
+export function cleanText(value: string | undefined): string | undefined {
+  return value === undefined
+    ? undefined
+    : value.replace(CONTROL_CHARACTERS, '');
+}
+
+function optionalUrl(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : redactUrlCredentials(value);
+}
+
 /** Numeric feed id out of a `feed/<id>` stream id. */
 export function feedIdFromStreamId(
   streamId: string | undefined
@@ -85,7 +107,7 @@ export function shapeSubscription(
   const category = feed.categories?.[0];
   return {
     feedId: feedIdFromStreamId(feed.id),
-    title: feed.title,
+    title: cleanText(feed.title),
     category: category?.label ?? labelFromStreamId(category?.id) ?? undefined,
     feedUrl:
       feed.url === undefined ? undefined : redactUrlCredentials(feed.url),
@@ -159,16 +181,19 @@ export function shapeEntry(
   const html = entry.summary?.content ?? entry.content?.content ?? '';
   const shaped: ShapedEntry = {
     id: entry.id === undefined ? '' : toDecimalId(entry.id),
-    title: entry.title,
-    author: entry.author,
+    title: cleanText(entry.title),
+    author: cleanText(entry.author),
     published:
       typeof entry.published === 'number'
         ? new Date(entry.published * 1000).toISOString()
         : undefined,
-    url: entry.canonical?.[0]?.href ?? entry.alternate?.[0]?.href,
+    // Redacted like a feed URL: an article link is whatever the publisher put
+    // in the feed, and a publisher who serves a paid feed with the credentials
+    // in its URLs tends to write the item links the same way.
+    url: optionalUrl(entry.canonical?.[0]?.href ?? entry.alternate?.[0]?.href),
     feed: {
       id: feedIdFromStreamId(entry.origin?.streamId),
-      title: entry.origin?.title,
+      title: cleanText(entry.origin?.title),
     },
     read: states.has('user/-/state/com.google/read'),
     starred: states.has('user/-/state/com.google/starred'),
@@ -182,7 +207,7 @@ export function shapeEntry(
 
   const enclosures = (entry.enclosure ?? [])
     .filter((e) => e.href !== undefined)
-    .map((e) => ({ url: e.href, type: e.type }));
+    .map((e) => ({ url: optionalUrl(e.href), type: e.type }));
   if (enclosures.length > 0) shaped.enclosures = enclosures;
 
   if (html === '') return shaped;
@@ -276,17 +301,36 @@ function stripMarkup(html: string): string {
   let i = 0;
   // Carried across iterations, and the reason this stays linear: `indexOf` from
   // each `<` separately is what re-scanned the tail over and over. `-1` is
-  // final — no `>` at or after one position means none after any later one — so
-  // once it is `-1` no search is ever repeated.
+  // final — no `>` at or after one position means none after any later one —
+  // so once it is `-1` no search is ever repeated.
   let gt = html.indexOf('>');
+  // Whether the last thing emitted is a `<` kept as text. What follows such a
+  // `<` in the input is not a letter — that is why it was kept — but what
+  // follows it in the *output* is whatever comes after the next thing that is
+  // dropped, and `<<>img …>` is how those two come apart: the `<>` goes, and
+  // the kept `<` lands against `img …>`. So a drop right behind a kept `<`
+  // emits a separator, and then no deletion can assemble an element out of
+  // pieces that were not one. That is what makes one pass sufficient. Without
+  // it the fixpoint loop in htmlToText was the guarantee, and a body of nested
+  // brackets bought a pass per bracket — quadratic, fifty seconds for a
+  // hundred kilobytes.
+  let keptLt = false;
+  const emit = (text: string): void => {
+    if (text === '') return;
+    out.push(text);
+    keptLt = false;
+  };
+  const dropped = (): void => {
+    if (keptLt) emit(' ');
+  };
 
   while (i < html.length) {
     const lt = html.indexOf('<', i);
     if (lt === -1) {
-      out.push(html.slice(i));
+      emit(html.slice(i));
       break;
     }
-    out.push(html.slice(i, lt));
+    emit(html.slice(i, lt));
 
     if (gt !== -1 && gt < lt) gt = html.indexOf('>', lt);
     const nextLt = html.indexOf('<', lt + 1);
@@ -296,12 +340,14 @@ function stripMarkup(html: string): string {
       if (!isTagStart(html[lt + 1])) {
         // A `<` that starts no element name is text — "if x < y" is a
         // comparison, and feeds are full of them.
-        out.push('<');
+        emit('<');
+        keptLt = true;
         i = lt + 1;
         continue;
       }
       // A fragment, either spliced (`<scr` in `<scr<script>`) or cut off by the
       // slice htmlToText takes. Either way it is not article text.
+      dropped();
       if (nextLt === -1) break;
       i = nextLt;
       continue;
@@ -310,6 +356,7 @@ function stripMarkup(html: string): string {
     const closing = html[lt + 1] === '/';
     const name = elementName(html, closing ? lt + 2 : lt + 1);
     i = gt + 1;
+    dropped();
 
     if (!closing && OPAQUE_ELEMENTS.has(name)) {
       // Script and style bodies are markup, not article text. A body whose
@@ -318,9 +365,9 @@ function stripMarkup(html: string): string {
       // labelled as an article.
       const end = closingTagEnd(html, name, i);
       i = end === -1 ? html.length : end;
-      out.push(' ');
+      emit(' ');
     } else if (closing ? BLOCK_ELEMENTS.has(name) : name === 'br') {
-      out.push('\n');
+      emit('\n');
     }
   }
   return out.join('');
@@ -409,32 +456,26 @@ export function htmlToText(
   // afterwards. Decoding runs exactly once, so doubly encoded text stays the
   // text it is.
   //
-  // The stripping that follows runs to a fixpoint rather than exactly once, and
-  // a second pass genuinely is not enough. `stripMarkup` keeps a `<` that opens
-  // no element name, because "if x < y" is a comparison and feeds are full of
-  // them — but that kept `<` is emitted next to whatever follows the fragment
-  // it dropped, and the two can join into an element that was never in the
-  // input. `&lt;&lt;&gt;img src=x onerror=…&gt;` decoded to `<<>img src=x …>`,
-  // one pass dropped the `<>` and emitted the leading `<` as text, and the
-  // result was a live `<img src=x onerror=…>` that nothing looked at again.
-  // Each pass only removes, so the loop terminates.
-  let stripped = stripMarkup(slice).replace(
-    /&(#x?[0-9a-f]+|[a-z]+);/gi,
-    decodeEntity
+  // Stripped once more after the decode, because the decode can put markup
+  // back: `&lt;&lt;&gt;img src=x onerror=…&gt;` decodes to `<<>img src=x …>`.
+  // One more pass is enough, and provably so: `stripMarkup` never leaves a
+  // `<` in front of a letter, a slash, a `!` or a `?` — a kept `<` has
+  // something else behind it in the input, and a drop right behind it emits a
+  // separator — so its output holds no element for a further pass to find.
+  // The passes are counted rather than looped to a fixpoint on purpose: a loop
+  // that runs until nothing changes is only as fast as the number of passes an
+  // input can buy, and nested brackets bought one per bracket. The property
+  // test in test/property.test.ts is what holds the claim.
+  const stripped = stripMarkup(
+    stripMarkup(slice).replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, decodeEntity)
   );
-  for (;;) {
-    const next = stripMarkup(stripped);
-    if (next === stripped) break;
-    stripped = next;
-  }
 
   const text = stripped
     // Raw control characters present in the source markup, not just the numeric
     // entities handled in decodeEntity: an ESC in an article body reaches the
     // model \u2014 and any terminal rendering it \u2014 verbatim otherwise. Tab and
     // newline survive, they are real formatting.
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
+    .replace(CONTROL_CHARACTERS, '')
     .replace(/[ \t\u00a0]+/g, ' ')
     .replace(/\n\s*\n\s*\n+/g, '\n\n')
     .trim();

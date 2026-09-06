@@ -31,6 +31,8 @@ const MAX_LIMIT = 100;
 const MAX_GET_ARTICLES = 20;
 /** Articles that can be edited in one `mark_articles` call. */
 const MAX_EDIT_ARTICLES = 100;
+/** Labels attached or detached in one `mark_articles` call. */
+const MAX_LABELS = 50;
 const DEFAULT_MAX_CONTENT_CHARS = 2000;
 const MAX_CONTENT_CHARS = 20_000;
 /** Characters of article text across one response, whatever the per-article cap. */
@@ -149,12 +151,12 @@ function shapeItems(
   items: RawEntry[],
   options: EntryOptions
 ): { articles: unknown[]; notes: string[] } {
-  const notes = new Notes();
+  const collected = new Notes();
   const budget = { left: options.totalContentBudget };
   const articles = items.map((item) =>
-    shapeEntry(item, itemIdToDecimal, options, budget, notes)
+    shapeEntry(item, itemIdToDecimal, options, budget, collected)
   );
-  return { articles, notes: notes.list() };
+  return { articles, notes: collected.list() };
 }
 
 export function registerArticleReadTools(
@@ -209,7 +211,7 @@ export function registerArticleReadTools(
           listingParams(args)
         )) as StreamResponse;
 
-        const { articles, notes } = shapeItems(data.items ?? [], {
+        const { articles, notes: collected } = shapeItems(data.items ?? [], {
           includeContent: args.include_content === true,
           maxContentChars: args.max_content_chars ?? DEFAULT_MAX_CONTENT_CHARS,
           totalContentBudget: TOTAL_CONTENT_BUDGET,
@@ -225,7 +227,7 @@ export function registerArticleReadTools(
               }
             : {}),
           ...(emptyHint === undefined ? {} : { hint: emptyHint }),
-          ...(notes.length > 0 ? { notes } : {}),
+          ...(collected.length > 0 ? { notes: collected } : {}),
         });
       })
   );
@@ -273,7 +275,7 @@ export function registerArticleReadTools(
           form
         )) as StreamResponse;
 
-        const { articles, notes } = shapeItems(data.items ?? [], {
+        const { articles, notes: collected } = shapeItems(data.items ?? [], {
           includeContent: true,
           maxContentChars: max_content_chars ?? DEFAULT_MAX_CONTENT_CHARS,
           totalContentBudget: TOTAL_CONTENT_BUDGET,
@@ -286,7 +288,7 @@ export function registerArticleReadTools(
                 note: `${missing} of the requested ids returned no article; they may have been purged by the FreshRSS retention settings.`,
               }
             : {}),
-          ...(notes.length > 0 ? { notes } : {}),
+          ...(collected.length > 0 ? { notes: collected } : {}),
         });
       })
   );
@@ -373,10 +375,12 @@ export function registerArticleWriteTools(
           .describe('true adds the star (favourite), false removes it'),
         add_labels: z
           .array(z.string())
+          .max(MAX_LABELS)
           .optional()
           .describe('User labels to attach; unknown labels are created'),
         remove_labels: z
           .array(z.string())
+          .max(MAX_LABELS)
           .optional()
           .describe('User labels to detach'),
       }),
