@@ -14,6 +14,19 @@ import {
 /** Default per-request timeout. */
 export const REQUEST_TIMEOUT_MS = 30_000;
 /**
+ * Ceiling on a response body, in bytes.
+ *
+ * FreshRSS caps one article at 500 000 characters and `list_articles` asks for
+ * at most 100 of them, so a legitimate answer stays well inside 64 MiB even
+ * when every article is at the cap and made of four-byte characters is not
+ * something a feed does. What the ceiling is for is the other case: an
+ * instance, or whatever answers in its place under `FRESHRSS_INSECURE_TLS`,
+ * that never stops sending. Everything downstream fits the result to a budget
+ * of a few hundred kilobytes; this is the only place where the whole body has
+ * to be held at once, and without it that hold had no bound.
+ */
+export const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
+/**
  * Timeout for calls that make FreshRSS fetch something from the internet before
  * it answers: `quickadd` downloads and parses the feed, `subscription/import`
  * subscribes to every entry of an OPML file and then refreshes all of them.
@@ -23,6 +36,18 @@ export const SLOW_REQUEST_TIMEOUT_MS = 120_000;
 /** Path of the Google Reader compatible API below the instance root. */
 const API_PREFIX = '/api/greader.php';
 const READER_PREFIX = `${API_PREFIX}/reader/api/0`;
+
+/** Raised when the instance answers with more than {@link MAX_RESPONSE_BYTES}. */
+export class ResponseTooLargeError extends Error {
+  constructor(method: string, path: string) {
+    super(
+      `FreshRSS API ${method} ${path} answered with more than ` +
+        `${MAX_RESPONSE_BYTES} bytes, which this server refuses to buffer. ` +
+        'Narrow the request — use the filters and the count parameter.'
+    );
+    this.name = 'ResponseTooLargeError';
+  }
+}
 
 export class FreshRssApiError extends Error {
   constructor(
@@ -111,10 +136,70 @@ export class HttpClient {
     return {
       status: response.status,
       ok: response.ok,
-      text: await response.text(),
+      text: await readBounded(response, method, path),
       contentType: response.headers.get('content-type') ?? '',
     };
   }
+}
+
+/**
+ * What both fetches agree on: undici's `Response` and the global one are the
+ * same thing with two incompatible sets of stream types, so this names only
+ * the operations the read below performs.
+ */
+interface BodyLike {
+  headers: { get(name: string): string | null };
+  body: {
+    getReader(): {
+      read(): Promise<{ done: boolean; value?: Uint8Array | undefined }>;
+      cancel(): Promise<void>;
+    };
+    cancel(): Promise<void>;
+  } | null;
+}
+
+/**
+ * The body as text, or {@link ResponseTooLargeError} once it passes the
+ * ceiling — read in chunks so the refusal costs the ceiling and not the body.
+ * A declared length above it is refused before a byte is read.
+ */
+async function readBounded(
+  response: BodyLike,
+  method: string,
+  path: string
+): Promise<string> {
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
+    await response.body?.cancel();
+    throw new ResponseTooLargeError(method, path);
+  }
+  if (response.body === null) return '';
+
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  const reader = response.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done || value === undefined) break;
+    received += value.byteLength;
+    if (received > MAX_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new ResponseTooLargeError(method, path);
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(concat(chunks, received));
+}
+
+function concat(chunks: Uint8Array[], total: number): Uint8Array {
+  if (chunks.length === 1) return chunks[0] as Uint8Array;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }
 
 /**
@@ -151,29 +236,34 @@ export class FreshRssApi {
    * cached login is long-lived and silently becomes invalid when the API
    * password is changed. Exactly one retry, so an actually wrong password
    * cannot turn into a login loop.
+   *
+   * The options are built per attempt rather than once. The write token `T`
+   * rides in the form, and it is derived from the same password hash the auth
+   * token is — so after a password change both are stale, `invalidate` drops
+   * both, and a retry that re-sent the form it was first given would carry
+   * the old `T` under a fresh login and fail the same way again.
    */
   private async authed(
     method: string,
     path: string,
-    options: SendOptions = {}
+    options: SendOptions | (() => Promise<SendOptions>) = {}
   ): Promise<HttpResponse> {
     this.requireConfig();
-    let response = await this.http.send(method, path, {
-      ...options,
-      headers: {
-        ...options.headers,
-        Authorization: `GoogleLogin auth=${await this.auth.authToken()}`,
-      },
-    });
-    if (response.status === 401) {
-      this.auth.invalidate();
-      response = await this.http.send(method, path, {
-        ...options,
+    const attempt = async (): Promise<HttpResponse> => {
+      const resolved =
+        typeof options === 'function' ? await options() : options;
+      return this.http.send(method, path, {
+        ...resolved,
         headers: {
-          ...options.headers,
+          ...resolved.headers,
           Authorization: `GoogleLogin auth=${await this.auth.authToken()}`,
         },
       });
+    };
+    let response = await attempt();
+    if (response.status === 401) {
+      this.auth.invalidate();
+      response = await attempt();
     }
     if (!response.ok) {
       throw new FreshRssApiError(response.status, response.text, method, path);
@@ -220,12 +310,14 @@ export class FreshRssApi {
     timeoutMs?: number
   ): Promise<string> {
     this.requireConfig();
-    const form = new URLSearchParams(fields);
-    form.set('T', await this.auth.writeToken());
     const response = await this.authed(
       'POST',
       `${READER_PREFIX}${path}`,
-      timeoutMs === undefined ? { form } : { form, timeoutMs }
+      async () => {
+        const form = new URLSearchParams(fields);
+        form.set('T', await this.auth.writeToken());
+        return timeoutMs === undefined ? { form } : { form, timeoutMs };
+      }
     );
     return response.text;
   }
@@ -285,11 +377,25 @@ function parseJson(text: string, method: string, path: string): unknown {
 export function expectOk(body: string, what: string): void {
   if (body.trim() !== 'OK') {
     throw new Error(
-      `FreshRSS did not confirm ${what}; it answered: ${truncate(body.trim(), 200)}`
+      `FreshRSS did not confirm ${what}; it answered ${upstreamText(body)}`
     );
   }
 }
 
-function truncate(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max)}…` : text;
+/**
+ * A string the instance wrote, quoted into one of this server's sentences.
+ *
+ * Bounded and marked, for the same reason article text is: the instance is
+ * the operator's, but what it answers with is whatever sits in front of it —
+ * a proxy's block page, a hostile deployment, a typo in FRESHRSS_URL that
+ * lands on somebody else's server. None of that gets to write an unbounded
+ * or unlabelled line into the model's context.
+ */
+export function upstreamText(text: string, max = 200): string {
+  const clean = text
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
+    .trim();
+  const shown = clean.length > max ? `${clean.slice(0, max)}…` : clean;
+  return `(untrusted text from the instance): ${shown}`;
 }

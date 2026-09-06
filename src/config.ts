@@ -76,8 +76,15 @@ export function parseElicitation(raw: string | undefined): boolean {
   const value = raw?.trim().toLowerCase();
   if (value === undefined || value === '' || value === 'true') return true;
   if (value === 'false') return false;
+  // The value is echoed so the operator can see what was set — shortened and
+  // stripped of control characters, because what was set may be a line pasted
+  // into the wrong variable, and a log line is a poor place for it.
+  const shown = (raw as string)
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .slice(0, 40);
   console.error(
-    `freshrss-mcp: ELICITATION must be "true" or "false" — got "${raw}". ` +
+    `freshrss-mcp: ELICITATION must be "true" or "false" — got "${shown}". ` +
       'Refusing to start rather than guess.'
   );
   process.exit(1);
@@ -186,8 +193,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     );
   }
 
+  // The parsed form, not the string: a stray space around the value, a query
+  // or a fragment would otherwise be glued in front of the API path and every
+  // request would miss. The origin and the path are all a base URL is.
+  if (parsed.search !== '' || parsed.hash !== '') {
+    console.error(
+      'freshrss-mcp: WARNING: FRESHRSS_URL carries a query or fragment, which ' +
+        'is ignored — it should be the root of the FreshRSS instance'
+    );
+  }
   return {
-    url: url.replace(/\/+$/, ''),
+    url: `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}`,
     user,
     apiPassword,
     insecureTls,

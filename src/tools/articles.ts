@@ -31,6 +31,8 @@ const MAX_LIMIT = 100;
 const MAX_GET_ARTICLES = 20;
 /** Articles that can be edited in one `mark_articles` call. */
 const MAX_EDIT_ARTICLES = 100;
+/** Labels attached or detached in one `mark_articles` call. */
+const MAX_LABELS = 50;
 const DEFAULT_MAX_CONTENT_CHARS = 2000;
 const MAX_CONTENT_CHARS = 20_000;
 /** Characters of article text across one response, whatever the per-article cap. */
@@ -373,10 +375,12 @@ export function registerArticleWriteTools(
           .describe('true adds the star (favourite), false removes it'),
         add_labels: z
           .array(z.string())
+          .max(MAX_LABELS)
           .optional()
           .describe('User labels to attach; unknown labels are created'),
         remove_labels: z
           .array(z.string())
+          .max(MAX_LABELS)
           .optional()
           .describe('User labels to detach'),
       }),

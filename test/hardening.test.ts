@@ -839,6 +839,19 @@ describe('article text sanitising', () => {
       'a script body full of near-misses',
       `<script>${'</script'.repeat(15_000)}${' '.repeat(120_000)}`,
     ],
+    [
+      // The shape that made a fixpoint loop quadratic: every pass peeled one
+      // `<>` off the middle and handed the next pass a string one bracket
+      // shorter, so a body of n brackets cost n passes over n characters —
+      // fifty seconds for the 120 000 characters below. One counted pass with
+      // a separator behind each kept `<` is what replaced it.
+      'nested brackets that used to buy a pass each',
+      `${'<'.repeat(60_000)}<>${'>'.repeat(59_999)}a>`,
+    ],
+    [
+      'the same, escaped',
+      `${'&lt;'.repeat(30_000)}&lt;&gt;${'&gt;'.repeat(29_999)}a&gt;`,
+    ],
   ])('stays linear on %s', (_name, html) => {
     expect(millisecondsFor(html, 20_000)).toBeLessThan(LINEAR_TIME_MS);
   });

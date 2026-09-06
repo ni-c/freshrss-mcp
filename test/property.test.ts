@@ -218,13 +218,21 @@ describe('markup never survives into the text', () => {
     );
   });
 
-  /** The exact shape the property found, kept as a named regression. */
+  /**
+   * The exact shape the property found, kept as a named regression.
+   *
+   * The kept `<` survives as the text it is, separated from what followed the
+   * dropped `<>` — `< img …>` is a comparison sign and some words to a
+   * browser, to a markdown renderer and to a model alike. What it must never
+   * be is `<img …>`.
+   */
   it('cannot be made to emit a live element by encoding it', () => {
-    expect(
-      htmlToText('&lt;&lt;&gt;img src=x onerror=alert(1)&gt;', 1000).text
-    ).toBe('');
-    expect(htmlToText('&lt;&lt;&gt;script&gt;', 1000).text).toBe('');
-    expect(htmlToText('&lt;&lt;&gt;/script&gt;', 1000).text).toBe('');
+    const LIVE = /<\/?[a-zA-Z][^<>]*>/;
+    const img = htmlToText('&lt;&lt;&gt;img src=x onerror=alert(1)&gt;', 1000);
+    expect(img.text).toBe('< img src=x onerror=alert(1)>');
+    expect(img.text).not.toMatch(LIVE);
+    expect(htmlToText('&lt;&lt;&gt;script&gt;', 1000).text).not.toMatch(LIVE);
+    expect(htmlToText('&lt;&lt;&gt;/script&gt;', 1000).text).not.toMatch(LIVE);
   });
 
   it('doubly encoded text stays literal rather than being decoded twice', () => {

@@ -132,6 +132,14 @@ export function assertTagName(name: string, what: string): string {
 }
 
 const ITEM_TAG_PREFIX = 'tag:google.com,2005:reader/item/';
+/**
+ * A FreshRSS entry id is a 64-bit integer: at most 16 hex digits in the long
+ * form, at most 20 decimal digits in the short one. Anything longer is not an
+ * id — and BigInt would still parse it, at a cost that grows with the length
+ * a caller chooses.
+ */
+const MAX_HEX_ID_DIGITS = 16;
+const MAX_DECIMAL_ID_DIGITS = 20;
 
 /**
  * Converts the item id of an API response into the decimal form the write
@@ -146,8 +154,14 @@ export function itemIdToDecimal(id: string): string {
   const raw = id.startsWith(ITEM_TAG_PREFIX)
     ? id.slice(ITEM_TAG_PREFIX.length)
     : id;
-  if (/^[0-9]+$/.test(raw) && !raw.startsWith('0')) return raw;
-  if (!/^[0-9a-fA-F]+$/.test(raw)) {
+  if (
+    /^[0-9]+$/.test(raw) &&
+    !raw.startsWith('0') &&
+    raw.length <= MAX_DECIMAL_ID_DIGITS
+  ) {
+    return raw;
+  }
+  if (!/^[0-9a-fA-F]+$/.test(raw) || raw.length > MAX_HEX_ID_DIGITS) {
     // Truncated: this value comes from the *response*, so a hostile or
     // compromised instance would otherwise choose a string that lands in an
     // error message the model reads.
@@ -161,10 +175,12 @@ export function itemIdToDecimal(id: string): string {
 /** Validates an article id supplied by the caller. */
 export function assertArticleId(id: string): string {
   const trimmed = id.trim();
-  if (/^[0-9]+$/.test(trimmed)) return trimmed;
+  if (/^[0-9]+$/.test(trimmed) && trimmed.length <= MAX_DECIMAL_ID_DIGITS) {
+    return trimmed;
+  }
   if (trimmed.startsWith(ITEM_TAG_PREFIX)) return itemIdToDecimal(trimmed);
   throw new ToolInputError(
-    `invalid article id: ${trimmed}. Use the decimal id returned by list_articles or list_article_ids.`
+    `invalid article id: ${trimmed.slice(0, 80)}. Use the decimal id returned by list_articles or list_article_ids.`
   );
 }
 

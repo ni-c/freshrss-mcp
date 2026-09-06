@@ -361,8 +361,15 @@ function fetchTarget(attribute: string, value: string): URL | null {
   try {
     parsed = new URL(value.startsWith('//') ? `http:${value}` : value);
   } catch {
-    // No scheme and no authority: a relative value, which FreshRSS cannot
-    // resolve into a request either.
+    // A value that names a scheme or an authority and still does not parse is
+    // not relative — it is a URL this check cannot read, and passing it on
+    // would leave FreshRSS's fetcher to read it its own way. Only a value with
+    // neither is left alone: that one addresses nothing.
+    if (/^[a-z][a-z0-9+.-]*:|^\/\//i.test(value)) {
+      throw malformed(
+        `a ${name} that is not a valid URL: ${redactUrlCredentials(value.slice(0, 200))}`
+      );
+    }
     return null;
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {

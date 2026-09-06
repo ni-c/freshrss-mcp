@@ -20,7 +20,12 @@ import {
   type RawUnreadCount,
 } from '../shape.js';
 
-import { expectOk, SLOW_REQUEST_TIMEOUT_MS, type FreshRssApi } from '../api.js';
+import {
+  expectOk,
+  SLOW_REQUEST_TIMEOUT_MS,
+  upstreamText,
+  type FreshRssApi,
+} from '../api.js';
 import { READ_ONLY } from './annotations.js';
 import { assertRoutableHosts } from '../hosts.js';
 import { redactUrlCredentials } from '../redact.js';
@@ -90,7 +95,10 @@ export function registerFeedReadTools(
           userName?: string;
           userEmail?: string;
         };
-        return jsonResult({
+        // Own words: the schema above declares no untrusted marker, and the
+        // marked result would carry two fields the schema strips — leaving the
+        // text block and `structuredContent` saying different things.
+        return ownWordsResult({
           userId: data.userId,
           userName: data.userName,
           userEmail: data.userEmail,
@@ -269,20 +277,24 @@ export function registerFeedWriteTools(
         // code says nothing about whether the subscription happened.
         if (!result.numResults || result.streamId === undefined) {
           return errorResult(
-            `FreshRSS could not subscribe to that URL: ${result.error ?? 'no feed found'}`
+            'FreshRSS could not subscribe to that URL' +
+              (typeof result.error === 'string'
+                ? `; it answered ${upstreamText(result.error)}`
+                : ': no feed found')
           );
         }
         const feedId = feedIdFromStreamId(result.streamId);
         if (feedId === null) {
           return errorResult(
-            `FreshRSS returned an unexpected stream id for the new feed: ${result.streamId}`
+            'FreshRSS returned an unexpected stream id for the new feed ' +
+              upstreamText(String(result.streamId), 80)
           );
         }
 
         if (title !== undefined || category !== undefined) {
           await editSubscription(api, feedId, title, category);
         }
-        return jsonResult({
+        return ownWordsResult({
           feedId,
           subscribed: true,
           note: 'Use list_feeds to see the feed with its resolved title and category.',
