@@ -97,14 +97,16 @@ describe('tool registration', () => {
     const names = (await (await connect()).listTools()).tools.map(
       (t) => t.name
     );
-    expect(names.sort()).toEqual([...READ_TOOLS, ...WRITE_TOOLS].sort());
+    expect(names.toSorted()).toEqual(
+      [...READ_TOOLS, ...WRITE_TOOLS].toSorted()
+    );
   });
 
   it('does not register write tools in read-only mode', async () => {
     const names = (
       await (await connect({ readOnly: true })).listTools()
     ).tools.map((t) => t.name);
-    expect(names.sort()).toEqual([...READ_TOOLS].sort());
+    expect(names.toSorted()).toEqual([...READ_TOOLS].toSorted());
   });
 
   it('declares an output schema on every tool', async () => {
@@ -146,7 +148,7 @@ describe('tool registration', () => {
         return properties?.untrusted === undefined;
       })
       .map((tool) => tool.name)
-      .sort();
+      .toSorted();
     // The ones whose answer is entirely this server's own words: ids it was
     // given, a sentence it built from the arguments, the account it
     // authenticates as.

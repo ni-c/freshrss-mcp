@@ -71,10 +71,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   20 decimal or 16 hexadecimal digits, which is what a 64-bit FreshRSS id
   is; `add_labels` and `remove_labels` take at most 50 names each.
 
-- `get_user_info` and `subscribe_feed` answered with the untrusted marker in
-  the text block while their output schema, which strips unknown fields,
-  removed it from `structuredContent`. Both are this server's own words and
-  now say the same thing in both channels.
+- **`get_user_info` and `subscribe_feed` broke on a client that validates.**
+  Both answered through the marked result, which adds `untrusted` and
+  `source` — two fields their closed output schemas do not name. A client
+  that had loaded `tools/list` checked the answer against the schema and
+  threw a `ProtocolError` on the success path of both; one that had not
+  saw nothing wrong, which is why the suite did not either. Both are this
+  server's own words and now answer as such, and a test loads the schemas
+  before calling.
 
 - `FRESHRSS_URL` is stored in its parsed form. A stray space around the
   value, a query or a fragment used to be glued in front of the API path;
@@ -90,6 +94,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   token, so what it runs has to be what was reviewed.
 - A dependency review runs on every pull request, failing on a high-severity
   advisory the change would introduce.
+- oxlint's `suspicious` category is on, and what it found is fixed: shadowed
+  names in the article and feed tools, helpers scoped inside test suites, and
+  `sort()` where `toSorted()` was meant. The build target moves to ES2023 for
+  the latter, which every supported Node has.
 
 - The tool reference marks the `essential` preset and the tools that ask a
   person before they act, per tool rather than only in the introduction. A test

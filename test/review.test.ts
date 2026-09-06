@@ -370,6 +370,37 @@ describe('import_opml and a URL that will not parse', () => {
 });
 
 describe('own-words results', () => {
+  /**
+   * A client that has loaded `tools/list` validates every `structuredContent`
+   * against the tool's output schema, and both schemas here are closed. The
+   * marker `jsonResult` adds — two fields neither schema names — made a
+   * validating client throw a ProtocolError on the success path of both
+   * tools, while a client that skipped `tools/list` saw nothing wrong.
+   */
+  it('survive a client that validates against the listed schema', async () => {
+    stubFreshRss({
+      '/user-info': JSON.stringify({ userId: '1', userName: 'tester' }),
+      '/subscription/quickadd': JSON.stringify({
+        numResults: 1,
+        streamId: 'feed/7',
+      }),
+    });
+    const client = await connect();
+    await client.listTools();
+    const user = (await client.callTool({
+      name: 'get_user_info',
+      arguments: {},
+    })) as CallToolResult;
+    expect(user.isError).toBeFalsy();
+    expect(dataOf(user)).toEqual({ userId: '1', userName: 'tester' });
+    const subscribed = (await client.callTool({
+      name: 'subscribe_feed',
+      arguments: { url: 'https://feeds.example.com/x' },
+    })) as CallToolResult;
+    expect(subscribed.isError).toBeFalsy();
+    expect(dataOf(subscribed)).toMatchObject({ feedId: 7 });
+  });
+
   it('get_user_info says the same thing in both channels', async () => {
     const result = await call(
       { '/user-info': JSON.stringify({ userId: '1', userName: 'tester' }) },

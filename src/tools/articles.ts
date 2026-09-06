@@ -151,12 +151,12 @@ function shapeItems(
   items: RawEntry[],
   options: EntryOptions
 ): { articles: unknown[]; notes: string[] } {
-  const notes = new Notes();
+  const collected = new Notes();
   const budget = { left: options.totalContentBudget };
   const articles = items.map((item) =>
-    shapeEntry(item, itemIdToDecimal, options, budget, notes)
+    shapeEntry(item, itemIdToDecimal, options, budget, collected)
   );
-  return { articles, notes: notes.list() };
+  return { articles, notes: collected.list() };
 }
 
 export function registerArticleReadTools(
@@ -211,7 +211,7 @@ export function registerArticleReadTools(
           listingParams(args)
         )) as StreamResponse;
 
-        const { articles, notes } = shapeItems(data.items ?? [], {
+        const { articles, notes: collected } = shapeItems(data.items ?? [], {
           includeContent: args.include_content === true,
           maxContentChars: args.max_content_chars ?? DEFAULT_MAX_CONTENT_CHARS,
           totalContentBudget: TOTAL_CONTENT_BUDGET,
@@ -227,7 +227,7 @@ export function registerArticleReadTools(
               }
             : {}),
           ...(emptyHint === undefined ? {} : { hint: emptyHint }),
-          ...(notes.length > 0 ? { notes } : {}),
+          ...(collected.length > 0 ? { notes: collected } : {}),
         });
       })
   );
@@ -275,7 +275,7 @@ export function registerArticleReadTools(
           form
         )) as StreamResponse;
 
-        const { articles, notes } = shapeItems(data.items ?? [], {
+        const { articles, notes: collected } = shapeItems(data.items ?? [], {
           includeContent: true,
           maxContentChars: max_content_chars ?? DEFAULT_MAX_CONTENT_CHARS,
           totalContentBudget: TOTAL_CONTENT_BUDGET,
@@ -288,7 +288,7 @@ export function registerArticleReadTools(
                 note: `${missing} of the requested ids returned no article; they may have been purged by the FreshRSS retention settings.`,
               }
             : {}),
-          ...(notes.length > 0 ? { notes } : {}),
+          ...(collected.length > 0 ? { notes: collected } : {}),
         });
       })
   );

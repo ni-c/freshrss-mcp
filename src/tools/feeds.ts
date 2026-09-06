@@ -133,8 +133,8 @@ export function registerFeedReadTools(
           loadUnreadCountsOptional(api),
         ]);
         const unread = unreadCountIndex(counts?.unreadcounts ?? []);
-        const feeds = (list.subscriptions ?? []).map((feed) =>
-          shapeSubscription(feed, unread)
+        const feeds = (list.subscriptions ?? []).map((subscription) =>
+          shapeSubscription(subscription, unread)
         );
         return jsonResult({
           feeds,
@@ -176,10 +176,10 @@ export function registerFeedReadTools(
           loadUnreadCounts(api),
         ]);
         const titles = new Map<number, string>();
-        for (const feed of list.subscriptions ?? []) {
-          const id = feedIdFromStreamId(feed.id);
-          if (id !== null && feed.title !== undefined)
-            titles.set(id, feed.title);
+        for (const subscription of list.subscriptions ?? []) {
+          const id = feedIdFromStreamId(subscription.id);
+          if (id !== null && subscription.title !== undefined)
+            titles.set(id, subscription.title);
         }
 
         const feeds: {

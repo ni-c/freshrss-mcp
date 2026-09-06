@@ -365,14 +365,14 @@ describe('subscribe_feed SSRF guard', () => {
   });
 });
 
+function opmlWith(url: string, attribute = 'xmlUrl'): string {
+  return `<?xml version="1.0"?><opml version="2.0"><body><outline text="feed" ${attribute}="${url}"/></body></opml>`;
+}
+
 describe('import_opml SSRF guard', () => {
   // GHSA-qqh2-7466-82f8, second finding: /subscription/import subscribes to
   // every xmlUrl and fetches it server-side — the capability subscribe_feed
   // guards, reached through a door that had no check on it at all.
-  function opmlWith(url: string, attribute = 'xmlUrl'): string {
-    return `<?xml version="1.0"?><opml version="2.0"><body><outline text="feed" ${attribute}="${url}"/></body></opml>`;
-  }
-
   it.each([
     'http://169.254.169.254/latest/meta-data/iam/security-credentials/',
     'http://127.0.0.1:8080/admin',
@@ -542,8 +542,8 @@ describe('import_opml SSRF guard', () => {
     }
     // Whatever reaches FreshRSS must no longer claim an encoding that makes it
     // read characters this check never saw.
-    for (const call of stub.readerCalls) {
-      expect(call.body.toLowerCase()).not.toContain('utf-7');
+    for (const request of stub.readerCalls) {
+      expect(request.body.toLowerCase()).not.toContain('utf-7');
     }
   });
 
@@ -688,25 +688,25 @@ describe('import_opml SSRF guard', () => {
   });
 });
 
-describe('config error messages', () => {
-  function loadExpectingExit(url: string): string {
-    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
-      throw new Error('exit');
-    }) as never);
-    expect(() =>
-      loadConfig({
-        FRESHRSS_URL: url,
-        FRESHRSS_USER: 'tester',
-        FRESHRSS_API_PASSWORD: 's3cret',
-      } as NodeJS.ProcessEnv)
-    ).toThrow('exit');
-    const logged = spy.mock.calls.flat().join(' ');
-    exit.mockRestore();
-    spy.mockRestore();
-    return logged;
-  }
+function loadExpectingExit(url: string): string {
+  const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('exit');
+  }) as never);
+  expect(() =>
+    loadConfig({
+      FRESHRSS_URL: url,
+      FRESHRSS_USER: 'tester',
+      FRESHRSS_API_PASSWORD: 's3cret',
+    } as NodeJS.ProcessEnv)
+  ).toThrow('exit');
+  const logged = spy.mock.calls.flat().join(' ');
+  exit.mockRestore();
+  spy.mockRestore();
+  return logged;
+}
 
+describe('config error messages', () => {
   // The userinfo check only runs once the URL parses, so a value that carries
   // credentials AND fails to parse is the one that could reach stderr verbatim.
   // An out-of-range port is the reachable case: `new URL` throws on it.
@@ -747,6 +747,12 @@ describe('get_articles error handling', () => {
     expect(textOf(result)).not.toMatch(/Unexpected token/);
   });
 });
+
+function millisecondsFor(html: string, limit: number): number {
+  const started = performance.now();
+  htmlToText(html, limit);
+  return performance.now() - started;
+}
 
 describe('article text sanitising', () => {
   it('strips raw control characters, including ANSI escapes', () => {
@@ -804,12 +810,6 @@ describe('article text sanitising', () => {
   // repaired figure and far below the broken one, so a slow CI runner does not
   // make it flap while a reintroduced regex still trips it.
   const LINEAR_TIME_MS = 1000;
-
-  function millisecondsFor(html: string, limit: number): number {
-    const started = performance.now();
-    htmlToText(html, limit);
-    return performance.now() - started;
-  }
 
   it('converts a body of unterminated tag starts in linear time', () => {
     // Strips to nothing, so it is invisible in the result — which is what made
