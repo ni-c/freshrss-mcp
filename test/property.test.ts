@@ -84,7 +84,11 @@ describe('credential redaction', () => {
         fc.array(
           fc.record({
             user: fc.stringMatching(/^[a-z]{3,8}$/),
-            password: fc.stringMatching(/^[A-Za-z0-9]{6,14}$/),
+            // Ends in a digit, and a host has none: the property reads "the
+            // password is not in the output", and a password of lower-case
+            // letters can be a substring of the host that legitimately stays
+            // (`totype` in `totypea.aa`, seed 2132840900 on 2026-09-07).
+            password: fc.stringMatching(/^[A-Za-z0-9]{5,13}[0-9]$/),
             host: fc.stringMatching(/^[a-z]{3,10}\.[a-z]{2,4}$/),
           }),
           { minLength: 1, maxLength: 6 }
@@ -103,7 +107,20 @@ describe('credential redaction', () => {
           expect(redacted.split('***@').length - 1).toBe(feeds.length * 2);
         }
       ),
-      RUNS
+      {
+        ...RUNS,
+        // The counterexample the old generator produced: a password that is a
+        // prefix of the host. It passes now because the redaction is right
+        // and the password can no longer be spelled out of a host.
+        examples: [
+          [
+            [
+              { user: 'aaa', password: 'totype1', host: 'totypea.aa' },
+              { user: 'aaa', password: 'aaAaaa1', host: 'aaa.aa' },
+            ],
+          ],
+        ],
+      }
     );
   });
 });
