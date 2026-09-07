@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- #region changelog -->
 
+## [0.3.2] - 2026-09-07
+
+### Security
+
+- **mcp-approval 0.8.2.** 0.3.1 already shipped the single-use sealed dialog
+  answer of 0.8.1, on npm and in the Docker image, which is built from the
+  lockfile. 0.8.2 adds `orderedResourceKey`, taken up below.
+
+- **Approval keys bound to positions.** `mark_all_as_read` keys its confirmation
+  on the pair (stream, cut-off). `setResourceKey` sorts its parts before
+  fingerprinting — set semantics — so a token issued for stream A and cut-off B
+  would also have confirmed the pair the other way round. FreshRSS issues no
+  stream id that is all digits, so the swap could not be expressed through the
+  tool, but the shape is a tuple and the key now comes from `orderedResourceKey`
+  in mcp-approval 0.8.2, which fingerprints each part at its position.
+  `mark_articles`, `unsubscribe_feed`, `delete_category_or_label` and
+  `import_opml` key sets or single ids and stay on `setResourceKey`.
+
 ## [0.3.1] - 2026-09-06
 
 ### Fixed
@@ -126,6 +144,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file nobody could open. `dist/**/*.js` is unchanged; the package is about a
   fifth smaller.
 
+[0.3.2]: https://github.com/ni-c/freshrss-mcp/releases/tag/v0.3.2
 [0.3.1]: https://github.com/ni-c/freshrss-mcp/releases/tag/v0.3.1
 
 ## [0.3.0] - 2026-09-03

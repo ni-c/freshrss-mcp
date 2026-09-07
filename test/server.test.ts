@@ -14,6 +14,7 @@ import {
   type Routes,
 } from './harness.js';
 import { expectPortableToolSchemas } from 'mcp-integration-harness';
+import { orderedResourceKey, setResourceKey } from 'mcp-approval';
 
 const READ_TOOLS = [
   'get_user_info',
@@ -586,6 +587,49 @@ describe('write tools', () => {
     })) as CallToolResult;
     expect(result.isError).toBe(true);
     expect(stub.calls).toHaveLength(0);
+  });
+
+  it('mark_all_as_read binds its token to the stream and the cut-off, by position', async () => {
+    // The pair is a tuple, not a set: `setResourceKey` sorts its parts, so a
+    // key built from it is the same for (stream, cut-off) and (cut-off, stream).
+    // No FreshRSS stream id is all digits, so the tool cannot be asked for the
+    // swapped pair — the key is positional because the shape is, and this pins
+    // which function builds it.
+    const parts = ['feed/12', '1786924800000000'];
+    const swapped = parts.toReversed();
+    expect(orderedResourceKey('mark_all_as_read', parts)).not.toBe(
+      orderedResourceKey('mark_all_as_read', swapped)
+    );
+    expect(setResourceKey('mark_all_as_read', parts)).toBe(
+      setResourceKey('mark_all_as_read', swapped)
+    );
+
+    const stub = stubFreshRss({ '/mark-all-as-read': 'OK' });
+    const client = await connect();
+    const args = { feed_id: 12, older_than: '2026-08-17T00:00:00Z' };
+    const token = await firstToken(client, 'mark_all_as_read', args);
+
+    // Both positions are bound: the same stream without the cut-off, and the
+    // same cut-off on another stream, are refused rather than executed.
+    for (const other of [
+      { feed_id: 12 },
+      { feed_id: 13, older_than: args.older_than },
+    ]) {
+      const result = (await client.callTool({
+        name: 'mark_all_as_read',
+        arguments: { ...other, confirm_token: token },
+      })) as CallToolResult;
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('issued for different arguments');
+    }
+    expect(stub.calls).toHaveLength(0);
+
+    const done = (await client.callTool({
+      name: 'mark_all_as_read',
+      arguments: { ...args, confirm_token: token },
+    })) as CallToolResult;
+    expect(done.isError).toBeFalsy();
+    expect(stub.readerCalls).toHaveLength(1);
   });
 
   it('unsubscribe_feed is confirmation-gated', async () => {

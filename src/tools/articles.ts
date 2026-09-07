@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { article, notes, untrustedFields } from '../output-schema.js';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { setResourceKey } from 'mcp-approval';
+import { orderedResourceKey, setResourceKey } from 'mcp-approval';
 import type { Approver, ConfirmationStore } from 'mcp-approval';
 import {
   Notes,
@@ -518,7 +518,11 @@ export function registerArticleWriteTools(
           args.older_than === undefined
             ? '0'
             : toEntryIdMicroseconds(args.older_than, 'older_than');
-        const resource = setResourceKey('mark_all_as_read', [
+        // A (stream, cut-off) pair, not a set: `setResourceKey` sorts its
+        // parts, so a token for one order would also confirm the other. No
+        // FreshRSS stream id is all digits, so the swap cannot be expressed
+        // through this tool — but the key is positional because the shape is.
+        const resource = orderedResourceKey('mark_all_as_read', [
           streamId,
           olderThan,
         ]);
