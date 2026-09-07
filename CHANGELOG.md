@@ -28,6 +28,119 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mark_articles`, `unsubscribe_feed`, `delete_category_or_label` and
   `import_opml` key sets or single ids and stay on `setResourceKey`.
 
+- **A refused login is not retried for ten seconds.** Every tool call that
+  needed a token was a fresh `ClientLogin`, and FreshRSS writes every refused
+  one into its log as `Password API mismatch for user …`. `get_user_info` is
+  annotated read-only, idempotent and cheap, and its 401 answer says "check
+  the password" — which is what a model retries. A wrong password in the
+  configuration was a burst of failed logins in the instance's log, and a
+  reverse proxy's rate limit or a fail2ban jail keyed on that line locks the
+  operator's own address out. A refused login (any status) is now remembered
+  for ten seconds and repeated from memory, with a note saying so and when the
+  next attempt is possible. The one retry after a 401 on a request is
+  unchanged; its refusal is what starts the cooldown.
+
+- **The publish job installs without running install hooks.** `release.yml`'s
+  publish job holds `id-token: write` for npm Trusted Publishing and ran a
+  plain `npm ci`, so every dependency's install hook ran with the OIDC token
+  reachable from the job environment. It runs `npm ci --ignore-scripts` like
+  the audit job and the Dockerfile already did — nothing in the tree declares
+  a hook — and `gh release create` checks the tag exists with `--verify-tag`.
+
+- **Tokens from the instance have a shape.** The `Auth=` line of the login
+  answer went into the `Authorization` header as it came; a carriage return or
+  a NUL in it made undici throw `Headers.append: "GoogleLogin auth=…" is an
+invalid header value` — the instance's string, unlabelled and unbounded,
+  into the model context. The write token rode in every form the same way.
+  Both must be visible ASCII of at most 1024 characters; anything else is
+  reported as "without a usable Auth token" / "not a write token".
+
+- **The startup line does not print a value that is not a URL.** A
+  `FRESHRSS_URL` that failed to parse was printed (redacted for userinfo), and
+  one with an unknown scheme was printed as `got ${scheme}` — a
+  fifty-six-character key with a colon behind it is a valid URL whose scheme
+  is the key. `FRESHRSS_API_PASSWORD` sits one line below this variable in
+  every compose file, and a password pasted into the wrong line is exactly a
+  value that does not parse. Only a value with `://` is quoted, redacted and
+  cut to 120 characters; anything else is described by its length.
+
+- **`mark_articles` validates the ids before it asks.** The dialog was raised
+  and the key built on the ids as written, and `assertArticleId` ran
+  afterwards — so the person was asked about a list that might not run, and
+  an approval could be spent on a call that then failed. Validation now comes
+  first and the key is built from the validated ids; `articleIds` in the
+  answer is the validated form.
+
+- **Control characters and lone surrogates in three more places.**
+  `get_unread_counts` handed feed titles on as they came, unlike `list_feeds`;
+  `export_opml` passed the document through with whatever was in it (XML 1.0
+  forbids those characters, so a well-formed export is unchanged); and
+  `&#xD800;` in an article — or a `\ud800` escape in the instance's JSON —
+  produced a lone surrogate, which `String.fromCodePoint` does not refuse and
+  every UTF-8 encoder on the client side does. Every string that leaves this
+  server is well-formed now (`toWellFormed`), and a surrogate reference
+  decodes to U+FFFD.
+
+### Fixed
+
+- **What the instance sends is read at a boundary, not through a cast.**
+  Every response was a TypeScript cast, and one value of the wrong shape took
+  the whole listing down — as `Output validation error` from the SDK's check
+  of the output schema, or as a `TypeError`. `feed/1e300` or a twenty-digit
+  feed id (`.int()` refuses both); `1e999` in `unread-count`, which
+  `JSON.parse` hands over as `Infinity`; `published` past ±8.64e12 seconds,
+  which `toISOString` throws on; a number where a title, an author, a URL or
+  an id belongs; `items` that is not a list; a body that is `null`. Objects,
+  arrays, strings, finite numbers and safe integers are now decided at the
+  boundary (`src/boundary.ts`), a field of the wrong shape is omitted and an
+  element of the wrong shape is skipped, feed ids are bounded to fifteen
+  digits, and display strings are cut at 2000 characters (URLs at 8192) so
+  one oversized title cannot cost the listing. A property test feeds every
+  read tool arbitrary JSON and shaped envelopes with arbitrary leaves through
+  the whole server and asserts on the absence of those errors; the harness
+  lists the tools once per connection, so every success path in the suite is
+  checked against the listed schema.
+
+- **The status is decided before the body is read.** A 401 or a 5xx with a
+  body past the 64 MiB ceiling answered "more than 67108864 bytes" — the
+  size instead of the status, no hint about the credentials, and the one
+  retry a 401 earns never ran. An error body is now read under its own
+  64 KiB ceiling, which cuts rather than refuses.
+
+- **`&constructor;` in an article decoded to a function.** The named-entity
+  table was an object literal, so `&constructor;` looked up
+  `Object.prototype.constructor` and the replace callback wrote
+  `function Object() { [native code] }` into the text. The table is a `Map`.
+
+- **`import_opml` measures the document in the bytes FreshRSS reads.** The
+  ceiling was 900 000 characters on the document as given; FreshRSS reads
+  1 048 576 _bytes_ and drops the rest, and the document sent is the
+  rewritten one — canonical URLs and XML escaping make it longer. A document
+  that would be cut on the FreshRSS side is refused before the dialog, with
+  the size it would be sent at.
+
+- **`import_opml` quotes FreshRSS's answer like every other tool** — through
+  `upstreamText`, cut and labelled, instead of the raw first 200 characters.
+
+- **Caller strings have ceilings at the schema.** `since`, `until` and
+  `older_than` (64 — `Date.parse` walks whatever it is given), `continuation`
+  (256), article ids (64), category and label names (200), a feed URL (8192)
+  and a title (1000).
+
+- **`get_user_info` reads the account strings as strings**, cleaned and cut
+  to 200 characters; a number where the user name belongs no longer fails the
+  schema.
+
+- **Trailing slashes in `FRESHRSS_URL`** are removed with a counted walk
+  rather than `/\/+$/`, which is quadratic in the length of the run.
+
+### Changed
+
+- The runtime image no longer carries yarn, corepack or `package-lock.json`;
+  nothing in it runs them.
+- `list_article_ids` carries `notes`, for the case where FreshRSS sends a
+  continuation value larger than this server accepts.
+
 ## [0.3.1] - 2026-09-06
 
 ### Fixed

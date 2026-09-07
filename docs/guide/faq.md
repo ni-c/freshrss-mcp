@@ -8,6 +8,13 @@ changed, and the server caches the auth token — but it retries the login exact
 after a 401, so a rotated password recovers on the next call rather than needing a
 restart.
 
+A login FreshRSS refuses is not tried again for ten seconds: the same answer is
+repeated from memory, with a note saying when the next attempt is possible. Every
+refused login is a line in the FreshRSS log, and a model that reads "check the
+password" tends to retry — the cooldown keeps one wrong password from becoming a
+burst that a reverse proxy's rate limit or a fail2ban jail acts on. Fix the
+password, wait ten seconds, call again.
+
 ## "FreshRSS reports the API as disabled" (503)
 
 **Settings → Authentication →** tick **"Allow API access"**. This is separate from

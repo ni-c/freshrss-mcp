@@ -178,6 +178,11 @@ export async function connect(
     client.connect(clientTransport),
     server.connect(serverTransport),
   ]);
+  // Listed once, so every `callTool` in every suite runs the client-side
+  // check of `structuredContent` against the tool's output schema on the
+  // success path — the check a real client performs, and the one a suite
+  // that never lists skips entirely.
+  await client.listTools();
   return Object.assign(client, { prompts });
 }
 

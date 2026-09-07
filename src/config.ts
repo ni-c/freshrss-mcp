@@ -164,18 +164,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   try {
     parsed = new URL(url);
   } catch {
-    // Redacted, and deliberately so: the userinfo check below only runs once the
-    // URL parses, so a value that does not parse at all but still carries
-    // credentials — "https://admin:s3cret@host:99999", an out-of-range port —
-    // would otherwise print the API password into the MCP client's log file.
     console.error(
-      `freshrss-mcp: FRESHRSS_URL is not a valid URL: ${redactUrlCredentials(url)}`
+      `freshrss-mcp: FRESHRSS_URL is not a valid URL: ${describeUrlValue(url)}`
     );
     process.exit(1);
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    // The scheme is not printed. `FRESHRSS_API_PASSWORD` sits one line below
+    // this variable in every compose file, and a key pasted into the wrong
+    // line — fifty-six hexadecimal characters and a colon — is a valid URL
+    // whose scheme is the key. "got ${parsed.protocol}" printed it in full.
     console.error(
-      `freshrss-mcp: FRESHRSS_URL must use http:// or https:// (got ${parsed.protocol})`
+      'freshrss-mcp: FRESHRSS_URL must use http:// or https:// ' +
+        `(got ${describeUrlValue(url)})`
     );
     process.exit(1);
   }
@@ -203,7 +204,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     );
   }
   return {
-    url: `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}`,
+    url: `${parsed.origin}${withoutTrailingSlashes(parsed.pathname)}`,
     user,
     apiPassword,
     insecureTls,
@@ -212,6 +213,40 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     allowTools,
     denyTools,
   };
+}
+
+/**
+ * A counted walk from the end rather than `replace(/\/+$/, '')`: a pattern
+ * that starts with a repetition and ends in `$` is tried from every position
+ * of the run and consumes the run each time — quadratic in the number of
+ * slashes, and the value is whatever was put in the environment.
+ */
+function withoutTrailingSlashes(path: string): string {
+  let end = path.length;
+  while (end > 0 && path[end - 1] === '/') end--;
+  return path.slice(0, end);
+}
+
+/**
+ * How a `FRESHRSS_URL` that is not usable is described in the startup line.
+ *
+ * Only a value that has the shape of a URL — a scheme followed by `://` — is
+ * quoted, redacted and cut; anything else is described by its length. The
+ * variable below this one in every compose file is the API password, and a
+ * password pasted into the wrong line is exactly a value that does not parse
+ * as a URL. Printing it, even redacted for userinfo, put it into the MCP
+ * client's log file.
+ */
+export function describeUrlValue(raw: string): string {
+  const clean = raw
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim();
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(clean)) {
+    const shown = redactUrlCredentials(clean);
+    return shown.length > 120 ? `${shown.slice(0, 120)}…` : shown;
+  }
+  return `a ${raw.length}-character value that does not look like a URL (no scheme://)`;
 }
 
 function isLoopbackHost(hostname: string): boolean {

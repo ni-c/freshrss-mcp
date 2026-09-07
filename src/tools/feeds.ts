@@ -10,14 +10,15 @@ import {
   run,
   ToolInputError,
 } from '../result.js';
+import { arrayOf, finiteNumberOf, objectOf, stringOf } from '../boundary.js';
 import {
+  cleanText,
   feedIdFromStreamId,
   labelFromStreamId,
+  MAX_DISPLAY_CHARS,
   shapeSubscription,
   unreadCountIndex,
   UNTRUSTED_CONTENT_NOTE,
-  type RawSubscription,
-  type RawUnreadCount,
 } from '../shape.js';
 
 import {
@@ -31,19 +32,36 @@ import { assertRoutableHosts } from '../hosts.js';
 import { redactUrlCredentials } from '../redact.js';
 import { assertFeedId, assertTagName } from '../streams.js';
 
-interface SubscriptionListResponse {
-  subscriptions?: RawSubscription[];
+/**
+ * Ceilings on the caller's strings: a feed URL of a few kilobytes is the
+ * longest anything on the web serves; a title and a category name are what
+ * FreshRSS shows in a list.
+ */
+export const MAX_FEED_URL_CHARS = 8192;
+export const MAX_TITLE_CHARS = 1000;
+const MAX_NAME_CHARS = 200;
+
+/** The `subscription/list` answer, read at the boundary. */
+async function loadSubscriptions(api: FreshRssApi): Promise<unknown[]> {
+  return arrayOf(
+    objectOf(await api.getJson('/subscription/list')).subscriptions
+  );
 }
 
 interface UnreadCountResponse {
-  max?: number;
-  unreadcounts?: RawUnreadCount[];
+  /** Only when the instance sent a finite number: `1e999` parses to `Infinity`. */
+  max: number | undefined;
+  unreadcounts: unknown[];
 }
 
 async function loadUnreadCounts(
   api: FreshRssApi
 ): Promise<UnreadCountResponse> {
-  return (await api.getJson('/unread-count')) as UnreadCountResponse;
+  const body = objectOf(await api.getJson('/unread-count'));
+  return {
+    max: finiteNumberOf(body.max),
+    unreadcounts: arrayOf(body.unreadcounts),
+  };
 }
 
 /**
@@ -90,18 +108,16 @@ export function registerFeedReadTools(
     },
     async () =>
       run(async () => {
-        const data = (await api.getJson('/user-info')) as {
-          userId?: string;
-          userName?: string;
-          userEmail?: string;
-        };
+        const data = objectOf(await api.getJson('/user-info'));
         // Own words: the schema above declares no untrusted marker, and the
         // marked result would carry two fields the schema strips — leaving the
-        // text block and `structuredContent` saying different things.
+        // text block and `structuredContent` saying different things. The
+        // three values are still the instance's, so they are read as strings,
+        // cleaned and cut like any other display string it sends.
         return ownWordsResult({
-          userId: data.userId,
-          userName: data.userName,
-          userEmail: data.userEmail,
+          userId: cleanText(data.userId, MAX_NAME_CHARS),
+          userName: cleanText(data.userName, MAX_NAME_CHARS),
+          userEmail: cleanText(data.userEmail, MAX_NAME_CHARS),
         });
       })
   );
@@ -126,14 +142,12 @@ export function registerFeedReadTools(
     },
     async () =>
       run(async () => {
-        const [list, counts] = await Promise.all([
-          api.getJson(
-            '/subscription/list'
-          ) as Promise<SubscriptionListResponse>,
+        const [subscriptions, counts] = await Promise.all([
+          loadSubscriptions(api),
           loadUnreadCountsOptional(api),
         ]);
-        const unread = unreadCountIndex(counts?.unreadcounts ?? []);
-        const feeds = (list.subscriptions ?? []).map((subscription) =>
+        const unread = unreadCountIndex(counts?.unreadcounts);
+        const feeds = subscriptions.map((subscription) =>
           shapeSubscription(subscription, unread)
         );
         return jsonResult({
@@ -169,17 +183,18 @@ export function registerFeedReadTools(
     },
     async () =>
       run(async () => {
-        const [list, counts] = await Promise.all([
-          api.getJson(
-            '/subscription/list'
-          ) as Promise<SubscriptionListResponse>,
+        const [subscriptions, counts] = await Promise.all([
+          loadSubscriptions(api),
           loadUnreadCounts(api),
         ]);
+        // Cleaned like the titles `list_feeds` shows: the same publisher wrote
+        // them, and this listing used to hand them on as they came.
         const titles = new Map<number, string>();
-        for (const subscription of list.subscriptions ?? []) {
+        for (const raw of subscriptions) {
+          const subscription = objectOf(raw);
           const id = feedIdFromStreamId(subscription.id);
-          if (id !== null && subscription.title !== undefined)
-            titles.set(id, subscription.title);
+          const title = cleanText(subscription.title, MAX_DISPLAY_CHARS);
+          if (id !== null && title !== undefined) titles.set(id, title);
         }
 
         const feeds: {
@@ -188,20 +203,18 @@ export function registerFeedReadTools(
           unread: number;
         }[] = [];
         const categories: { name: string; unread: number }[] = [];
-        for (const entry of counts.unreadcounts ?? []) {
-          if (entry.id === undefined || !entry.count) continue;
-          const feedId = feedIdFromStreamId(entry.id);
+        for (const raw of counts.unreadcounts) {
+          const entry = objectOf(raw);
+          const id = stringOf(entry.id);
+          const count = finiteNumberOf(entry.count);
+          if (id === undefined || !count) continue;
+          const feedId = feedIdFromStreamId(id);
           if (feedId !== null) {
-            feeds.push({
-              feedId,
-              title: titles.get(feedId),
-              unread: entry.count,
-            });
+            feeds.push({ feedId, title: titles.get(feedId), unread: count });
             continue;
           }
-          const label = labelFromStreamId(entry.id);
-          if (label !== null)
-            categories.push({ name: label, unread: entry.count });
+          const label = labelFromStreamId(id);
+          if (label !== null) categories.push({ name: label, unread: count });
         }
         feeds.sort((a, b) => b.unread - a.unread);
         categories.sort((a, b) => b.unread - a.unread);
@@ -233,13 +246,18 @@ export function registerFeedWriteTools(
         'FreshRSS discovers the feed and then downloads it, so this call can take a while. ' +
         'A category that does not exist yet is created.',
       inputSchema: z.object({
-        url: z.string().describe('Feed URL or website URL (http/https)'),
+        url: z
+          .string()
+          .max(MAX_FEED_URL_CHARS)
+          .describe('Feed URL or website URL (http/https)'),
         title: z
           .string()
+          .max(MAX_TITLE_CHARS)
           .optional()
           .describe("Title to use instead of the feed's own title"),
         category: z
           .string()
+          .max(MAX_NAME_CHARS)
           .optional()
           .describe('Category to file the feed under; created if unknown'),
       }),
@@ -264,15 +282,13 @@ export function registerFeedWriteTools(
     async ({ url, title, category }) =>
       run(async () => {
         const feedUrl = await assertHttpUrl(url);
-        const result = (await api.getJson(
-          '/subscription/quickadd',
-          { quickadd: feedUrl },
-          SLOW_REQUEST_TIMEOUT_MS
-        )) as {
-          numResults?: number;
-          streamId?: string;
-          error?: string;
-        };
+        const result = objectOf(
+          await api.getJson(
+            '/subscription/quickadd',
+            { quickadd: feedUrl },
+            SLOW_REQUEST_TIMEOUT_MS
+          )
+        );
         // quickadd reports failures with HTTP 200 and numResults 0, so the status
         // code says nothing about whether the subscription happened.
         if (!result.numResults || result.streamId === undefined) {
@@ -315,9 +331,10 @@ export function registerFeedWriteTools(
           .int()
           .positive()
           .describe('Numeric feedId from list_feeds'),
-        title: z.string().optional().describe('New title'),
+        title: z.string().max(MAX_TITLE_CHARS).optional().describe('New title'),
         category: z
           .string()
+          .max(MAX_NAME_CHARS)
           .optional()
           .describe('Category to move the feed to'),
       }),
@@ -459,7 +476,9 @@ async function assertHttpUrl(url: string): Promise<string> {
   try {
     parsed = new URL(url.trim());
   } catch {
-    throw new ToolInputError(`invalid url: ${redactUrlCredentials(url)}`);
+    throw new ToolInputError(
+      `invalid url: ${redactUrlCredentials(url.trim().slice(0, 200))}`
+    );
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new ToolInputError(

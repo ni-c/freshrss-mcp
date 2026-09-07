@@ -46,7 +46,11 @@ jobs:
             echo "Tag $GITHUB_REF_NAME does not match package.json version $pkg" >&2
             exit 1
           fi
-      - run: npm ci
+      # --ignore-scripts: this job holds the OIDC token for Trusted Publishing,
+      # and an install hook of any dependency would run with it available.
+      # Nothing in the tree declares one (`npm query ':attr(scripts,[postinstall])'`
+      # and its install/preinstall siblings are empty), so nothing is lost.
+      - run: npm ci --ignore-scripts
       # --provenance requires a PUBLIC repository.
       - run: npm publish --provenance
 
@@ -123,5 +127,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
             --title "$GITHUB_REF_NAME" \
             --notes-file release-notes.md

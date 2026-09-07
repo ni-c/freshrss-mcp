@@ -3,12 +3,8 @@ import { article, notes, untrustedFields } from '../output-schema.js';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { orderedResourceKey, setResourceKey } from 'mcp-approval';
 import type { Approver, ConfirmationStore } from 'mcp-approval';
-import {
-  Notes,
-  shapeEntry,
-  type EntryOptions,
-  type RawEntry,
-} from '../shape.js';
+import { arrayOf, objectOf, stringOf } from '../boundary.js';
+import { Notes, shapeEntry, type EntryOptions } from '../shape.js';
 import {
   assertArticleId,
   assertTagName,
@@ -42,6 +38,18 @@ const READ_STATE = 'user/-/state/com.google/read';
 const STARRED_STATE = 'user/-/state/com.google/starred';
 const LABEL_PREFIX = 'user/-/label/';
 
+/**
+ * Ceilings on the caller's strings. What `assertTagName` accepts is 200
+ * characters; an article id is at most 48 (the `tag:google.com,2005:reader/
+ * item/` prefix and sixteen hex digits); a date is a few dozen characters and
+ * `Date.parse` walks whatever it is given; a continuation is a FreshRSS entry
+ * id. None of them is a place for a megabyte.
+ */
+export const MAX_NAME_CHARS = 200;
+export const MAX_ARTICLE_ID_CHARS = 64;
+export const MAX_DATE_CHARS = 64;
+export const MAX_CONTINUATION_CHARS = 256;
+
 const selectorSchema = {
   feed_id: z
     .number()
@@ -51,10 +59,12 @@ const selectorSchema = {
     .describe('Numeric feedId from list_feeds'),
   category: z
     .string()
+    .max(MAX_NAME_CHARS)
     .optional()
     .describe('Category (folder) name exactly as returned by list_categories'),
   label: z
     .string()
+    .max(MAX_NAME_CHARS)
     .optional()
     .describe('User label name exactly as returned by list_categories'),
   stream: z
@@ -85,14 +95,17 @@ const listingSchema = {
     .describe('Sort order by publication date, default newest'),
   since: z
     .string()
+    .max(MAX_DATE_CHARS)
     .optional()
     .describe('Only articles published after this ISO-8601 date'),
   until: z
     .string()
+    .max(MAX_DATE_CHARS)
     .optional()
     .describe('Only articles published before this ISO-8601 date'),
   continuation: z
     .string()
+    .max(MAX_CONTINUATION_CHARS)
     .optional()
     .describe(
       'Continuation value from a previous call, to fetch the next page'
@@ -142,16 +155,35 @@ function listingParams(args: {
   };
 }
 
-interface StreamResponse {
-  items?: RawEntry[];
-  continuation?: string;
+/**
+ * A `stream/contents` answer, read at the boundary: `items` is whatever list
+ * the instance sent, and a continuation is one only if it is a string of the
+ * size a FreshRSS entry id has. A larger one is dropped with a note rather
+ * than answered — it could not be sent back through the input schema anyway.
+ */
+function streamResponse(
+  body: unknown,
+  collector: Notes
+): { items: unknown[]; continuation: string | undefined } {
+  const data = objectOf(body);
+  const continuation = stringOf(data.continuation);
+  if (
+    continuation !== undefined &&
+    continuation.length > MAX_CONTINUATION_CHARS
+  ) {
+    collector.add(
+      'FreshRSS sent a continuation value larger than this server accepts, so the next page cannot be requested; narrow the request with since/until instead.'
+    );
+    return { items: arrayOf(data.items), continuation: undefined };
+  }
+  return { items: arrayOf(data.items), continuation };
 }
 
 function shapeItems(
-  items: RawEntry[],
-  options: EntryOptions
+  items: unknown[],
+  options: EntryOptions,
+  collected: Notes
 ): { articles: unknown[]; notes: string[] } {
-  const collected = new Notes();
   const budget = { left: options.totalContentBudget };
   const articles = items.map((item) =>
     shapeEntry(item, itemIdToDecimal, options, budget, collected)
@@ -206,16 +238,22 @@ export function registerArticleReadTools(
     async (args) =>
       run(async () => {
         const { streamId } = resolveStream(selectorOf(args));
-        const data = (await api.getJson(
-          streamContentsPath(streamId),
-          listingParams(args)
-        )) as StreamResponse;
+        const collector = new Notes();
+        const data = streamResponse(
+          await api.getJson(streamContentsPath(streamId), listingParams(args)),
+          collector
+        );
 
-        const { articles, notes: collected } = shapeItems(data.items ?? [], {
-          includeContent: args.include_content === true,
-          maxContentChars: args.max_content_chars ?? DEFAULT_MAX_CONTENT_CHARS,
-          totalContentBudget: TOTAL_CONTENT_BUDGET,
-        });
+        const { articles, notes: collected } = shapeItems(
+          data.items,
+          {
+            includeContent: args.include_content === true,
+            maxContentChars:
+              args.max_content_chars ?? DEFAULT_MAX_CONTENT_CHARS,
+            totalContentBudget: TOTAL_CONTENT_BUDGET,
+          },
+          collector
+        );
         const emptyHint = emptyResultHint(articles.length, selectorOf(args));
         return jsonResult({
           articles,
@@ -241,7 +279,7 @@ export function registerArticleReadTools(
         `At most ${MAX_GET_ARTICLES} ids per call.`,
       inputSchema: z.object({
         article_ids: z
-          .array(z.string())
+          .array(z.string().max(MAX_ARTICLE_ID_CHARS))
           .min(1)
           .max(MAX_GET_ARTICLES)
           .describe('Article ids as returned by list_articles'),
@@ -270,16 +308,21 @@ export function registerArticleReadTools(
       run(async () => {
         const form = new URLSearchParams();
         for (const id of article_ids) form.append('i', assertArticleId(id));
-        const data = (await api.postFormJson(
-          '/stream/items/contents',
-          form
-        )) as StreamResponse;
+        const collector = new Notes();
+        const data = streamResponse(
+          await api.postFormJson('/stream/items/contents', form),
+          collector
+        );
 
-        const { articles, notes: collected } = shapeItems(data.items ?? [], {
-          includeContent: true,
-          maxContentChars: max_content_chars ?? DEFAULT_MAX_CONTENT_CHARS,
-          totalContentBudget: TOTAL_CONTENT_BUDGET,
-        });
+        const { articles, notes: collected } = shapeItems(
+          data.items,
+          {
+            includeContent: true,
+            maxContentChars: max_content_chars ?? DEFAULT_MAX_CONTENT_CHARS,
+            totalContentBudget: TOTAL_CONTENT_BUDGET,
+          },
+          collector
+        );
         const missing = article_ids.length - articles.length;
         return jsonResult({
           articles,
@@ -308,25 +351,38 @@ export function registerArticleReadTools(
         count: z.number().int(),
         continuation: z.string().optional(),
         hint: z.string().optional(),
+        notes,
       }),
     },
     async (args) =>
       run(async () => {
         const { streamId } = resolveStream(selectorOf(args));
-        const data = (await api.getJson('/stream/items/ids', {
-          ...listingParams(args),
-          s: streamId,
-        })) as { itemRefs?: { id?: string }[]; continuation?: string };
+        const collector = new Notes();
+        const body = objectOf(
+          await api.getJson('/stream/items/ids', {
+            ...listingParams(args),
+            s: streamId,
+          })
+        );
+        const data = streamResponse(body, collector);
 
-        const articleIds = (data.itemRefs ?? [])
-          .map((ref) => ref.id)
-          .filter((id): id is string => id !== undefined);
+        // Only what an id looks like: a string of the size `assertArticleId`
+        // would accept back. Anything else could not be used with the other
+        // tools, and a number where a string belongs would fail the schema.
+        const articleIds = arrayOf(body.itemRefs)
+          .map((ref) => stringOf(objectOf(ref).id))
+          .filter(
+            (id): id is string =>
+              id !== undefined && id.length <= MAX_ARTICLE_ID_CHARS
+          );
         const emptyHint = emptyResultHint(articleIds.length, selectorOf(args));
+        const collected = collector.list();
         return jsonResult({
           articleIds,
           count: articleIds.length,
           continuation: data.continuation,
           ...(emptyHint === undefined ? {} : { hint: emptyHint }),
+          ...(collected.length > 0 ? { notes: collected } : {}),
         });
       })
   );
@@ -361,7 +417,7 @@ export function registerArticleWriteTools(
           .optional()
           .describe('Token from the first call of this tool'),
         article_ids: z
-          .array(z.string())
+          .array(z.string().max(MAX_ARTICLE_ID_CHARS))
           .min(1)
           .max(MAX_EDIT_ARTICLES)
           .describe('Article ids as returned by list_articles'),
@@ -374,12 +430,12 @@ export function registerArticleWriteTools(
           .optional()
           .describe('true adds the star (favourite), false removes it'),
         add_labels: z
-          .array(z.string())
+          .array(z.string().max(MAX_NAME_CHARS))
           .max(MAX_LABELS)
           .optional()
           .describe('User labels to attach; unknown labels are created'),
         remove_labels: z
-          .array(z.string())
+          .array(z.string().max(MAX_NAME_CHARS))
           .max(MAX_LABELS)
           .optional()
           .describe('User labels to detach'),
@@ -413,6 +469,11 @@ export function registerArticleWriteTools(
       mcp
     ) =>
       run(async () => {
+        // Validated before the dialog, and the key is built from the validated
+        // form: the person is asked about ids that will be sent, not about
+        // whatever the caller wrote, and no approval is spent on a call that
+        // cannot run.
+        const ids = article_ids.map(assertArticleId);
         const add: string[] = [];
         const remove: string[] = [];
         if (read === true) add.push(READ_STATE);
@@ -437,14 +498,14 @@ export function registerArticleWriteTools(
             mcp,
             confirmations,
             {
-              what: `mark ${article_ids.length} article(s) as read`,
+              what: `mark ${ids.length} article(s) as read`,
               consequence:
                 'FreshRSS keeps no record of which of them were unread, so ' +
                 'this cannot be undone. The other changes in the same call — ' +
                 'stars and labels — can be set back.',
               // The exact set: an approval for three articles must not execute
               // against a longer list the model chose afterwards.
-              resourceKey: setResourceKey('mark_articles', article_ids),
+              resourceKey: setResourceKey('mark_articles', ids),
               token: confirm_token,
               toolName: 'mark_articles',
               hint: 'Tick to mark them read, leave it to cancel.',
@@ -460,7 +521,7 @@ export function registerArticleWriteTools(
         }
 
         const form = new URLSearchParams();
-        for (const id of article_ids) form.append('i', assertArticleId(id));
+        for (const id of ids) form.append('i', id);
         for (const value of add) form.append('a', value);
         for (const value of remove) form.append('r', value);
 
@@ -469,8 +530,8 @@ export function registerArticleWriteTools(
           'the change of the article states'
         );
         return ownWordsResult({
-          updated: article_ids.length,
-          articleIds: article_ids,
+          updated: ids.length,
+          articleIds: ids,
           changes: describeChanges(read, starred, add_labels, remove_labels),
         });
       })
@@ -489,6 +550,7 @@ export function registerArticleWriteTools(
         ...selectorSchema,
         older_than: z
           .string()
+          .max(MAX_DATE_CHARS)
           .optional()
           .describe(
             'Only articles published before this ISO-8601 date; default: all of them'

@@ -27,6 +27,14 @@ export const REQUEST_TIMEOUT_MS = 30_000;
  */
 export const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
 /**
+ * Ceiling on the body of an *error* response, in bytes. The status is decided
+ * first, and what is read after a 401 or a 502 is only ever quoted — cut to
+ * 2000 characters — so there is no reason to hold more of a proxy's login
+ * page than this, and no reason to refuse the answer over its size: the
+ * status and its hint are the answer.
+ */
+export const MAX_ERROR_BODY_BYTES = 64 * 1024;
+/**
  * Timeout for calls that make FreshRSS fetch something from the internet before
  * it answers: `quickadd` downloads and parses the feed, `subscription/import`
  * subscribes to every entry of an OPML file and then refreshes all of them.
@@ -133,10 +141,16 @@ export class HttpClient {
         } as UndiciRequestInit)
       : await fetch(url, init);
 
+    // The status first. A 401 with a two-megabyte login page in front of it
+    // used to surface as "answered with more than 67108864 bytes" when the
+    // page was large enough — the size instead of the status, no hint about
+    // the credentials, and the one retry that a 401 earns never ran.
     return {
       status: response.status,
       ok: response.ok,
-      text: await readBounded(response, method, path),
+      text: response.ok
+        ? await readBounded(response, method, path)
+        : await readErrorBody(response),
       contentType: response.headers.get('content-type') ?? '',
     };
   }
@@ -191,7 +205,36 @@ async function readBounded(
   return new TextDecoder().decode(concat(chunks, received));
 }
 
+/**
+ * The body of an error response, cut at {@link MAX_ERROR_BODY_BYTES} rather
+ * than refused, and never thrown from: the status is what the caller acts on,
+ * and a body that fails to read is the same as no body.
+ */
+async function readErrorBody(response: BodyLike): Promise<string> {
+  if (response.body === null) return '';
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  const reader = response.body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done || value === undefined) break;
+      chunks.push(value);
+      received += value.byteLength;
+      if (received >= MAX_ERROR_BODY_BYTES) {
+        await reader.cancel();
+        break;
+      }
+    }
+  } catch {
+    // A body that fails to arrive is still an error response with its status.
+  }
+  const bytes = concat(chunks, received).subarray(0, MAX_ERROR_BODY_BYTES);
+  return new TextDecoder().decode(bytes);
+}
+
 function concat(chunks: Uint8Array[], total: number): Uint8Array {
+  if (chunks.length === 0) return new Uint8Array(0);
   if (chunks.length === 1) return chunks[0] as Uint8Array;
   const out = new Uint8Array(total);
   let offset = 0;
@@ -397,5 +440,6 @@ export function upstreamText(text: string, max = 200): string {
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
     .trim();
   const shown = clean.length > max ? `${clean.slice(0, max)}…` : clean;
-  return `(untrusted text from the instance): ${shown}`;
+  // After the cut: a surrogate pair split by the slice is a lone surrogate.
+  return `(untrusted text from the instance): ${shown.toWellFormed()}`;
 }
