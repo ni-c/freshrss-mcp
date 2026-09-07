@@ -4,22 +4,34 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { setResourceKey } from 'mcp-approval';
 import type { Approver, ConfirmationStore } from 'mcp-approval';
 
-import { SLOW_REQUEST_TIMEOUT_MS, type FreshRssApi } from '../api.js';
+import {
+  SLOW_REQUEST_TIMEOUT_MS,
+  upstreamText,
+  type FreshRssApi,
+} from '../api.js';
 import { READ_ONLY } from './annotations.js';
 import { assertRoutableHosts } from '../hosts.js';
 import { redactOpmlCredentials, redactUrlCredentials } from '../redact.js';
 import { errorResult, ownWordsResult, run, ToolInputError } from '../result.js';
-import { UNTRUSTED_CONTENT_NOTE } from '../shape.js';
+import { cleanText, UNTRUSTED_CONTENT_NOTE } from '../shape.js';
 
 /** Characters of OPML returned to the model. */
 const MAX_EXPORT_CHARS = 200_000;
 /**
- * Characters of OPML accepted for import. FreshRSS reads at most 1 048 576 bytes
- * of the request body (`file_get_contents('php://input', …, 1048576)`) and
- * silently truncates the rest, which would arrive as malformed XML — so the
- * limit lives here, well below that.
+ * Characters of OPML accepted for import, checked on the document as it
+ * arrives — cheap, and most of the ceiling.
  */
 const MAX_IMPORT_CHARS = 900_000;
+/**
+ * Bytes FreshRSS reads of the request body:
+ * `file_get_contents('php://input', false, null, 0, 1048576)` in greader.php.
+ * The rest is silently dropped, and a document cut anywhere is not well-formed
+ * XML — so the import fails on the FreshRSS side, after the person approved it.
+ * Checked on the document that is *sent*: it is the one that was rewritten with
+ * escaped, canonical URLs, and in UTF-8 bytes, which is what FreshRSS counts.
+ * The character check above is not enough for either.
+ */
+export const FRESHRSS_IMPORT_BYTES = 1_048_576;
 
 export function registerOpmlReadTools(
   server: McpServer,
@@ -54,10 +66,16 @@ export function registerOpmlReadTools(
     async () =>
       run(async () => {
         // HTTP-auth feeds are stored as https://user:pass@host/feed and the
-        // export carries that verbatim in xmlUrl.
-        const opml = redactOpmlCredentials(
-          await api.getText('/subscription/export')
-        );
+        // export carries that verbatim in xmlUrl. Control characters are
+        // removed like they are from every other publisher-written string
+        // this server hands on — a feed title is what an OPML `text`
+        // attribute holds. XML 1.0 forbids them, so a well-formed export is
+        // byte-identical afterwards; only a document that was never one
+        // changes.
+        const opml =
+          cleanText(
+            redactOpmlCredentials(await api.getText('/subscription/export'))
+          ) ?? '';
         const truncated = opml.length > MAX_EXPORT_CHARS;
         const shown = truncated ? opml.slice(0, MAX_EXPORT_CHARS) : opml;
         // The document goes in a field rather than being the result: a schema
@@ -493,6 +511,15 @@ export function registerOpmlWriteTools(
         // Before the token, not after it: a document that will be refused must
         // not first be confirmed, and the prompt names the hosts it found.
         const { hosts, document } = await assertOutlineTargets(declared);
+        const bytes = Buffer.byteLength(document, 'utf8');
+        if (bytes > FRESHRSS_IMPORT_BYTES) {
+          throw new ToolInputError(
+            `the OPML document is too large for FreshRSS: it is ${bytes} bytes ` +
+              `as sent (with the checked URLs written back), and FreshRSS reads ` +
+              `at most ${FRESHRSS_IMPORT_BYTES} bytes of an import and drops ` +
+              'the rest. Split it or import it through the FreshRSS web interface.'
+          );
+        }
         // The token is bound to the exact document: confirming a small OPML must
         // not authorise importing a different, larger one.
         const resource = setResourceKey('import_opml', [opml]);
@@ -537,7 +564,7 @@ export function registerOpmlWriteTools(
         );
         if (body.trim() !== 'OK') {
           return errorResult(
-            `FreshRSS did not confirm the import; it answered: ${body.trim().slice(0, 200)}`
+            `FreshRSS did not confirm the import; it answered ${upstreamText(body)}`
           );
         }
         return ownWordsResult({

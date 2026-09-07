@@ -66,6 +66,20 @@ guarded, over a caller-named list instead of a whole stream.
 See [Asking a person](/guide/approval) for what the dialog contains, which
 clients show one, and what `ELICITATION=false` does and does not change.
 
+## What the instance sends
+
+The instance is yours, but what answers under `FRESHRSS_URL` is whatever sits
+there — a proxy's block page, a typo that lands on somebody else's server. Its JSON
+is read at a boundary rather than trusted to have the documented shape: a field of
+the wrong type is omitted, an element of the wrong shape is skipped, numbers must be
+finite, display strings are cut, and the tokens it hands out must look like tokens
+before they go back out in a request header. What that buys is that one odd value —
+`1e999` as an unread count, a number where a title belongs — cannot take a whole
+listing down, and that the instance's text reaches the model bounded and labelled.
+
+A login FreshRSS refuses is not retried for ten seconds; see the
+[FAQ](/guide/faq#freshrss-rejects-the-login-401) for why.
+
 ## Credentials in feed URLs
 
 FreshRSS stores HTTP-auth feeds — paid newsletters, private Patreon feeds — as

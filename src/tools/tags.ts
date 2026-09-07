@@ -3,11 +3,11 @@ import { notes, record, untrustedFields } from '../output-schema.js';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { setResourceKey } from 'mcp-approval';
 import type { Approver, ConfirmationStore } from 'mcp-approval';
+import { arrayOf, finiteNumberOf, objectOf, stringOf } from '../boundary.js';
 import {
   labelFromStreamId,
   unreadCountIndex,
   UNTRUSTED_CONTENT_NOTE,
-  type RawTag,
 } from '../shape.js';
 
 import { expectOk, type FreshRssApi } from '../api.js';
@@ -20,6 +20,9 @@ import {
   loadUnreadCountsOptional,
   UNREAD_COUNTS_UNAVAILABLE,
 } from './feeds.js';
+
+/** What `assertTagName` accepts; the schema says so before the guard runs. */
+const MAX_NAME_CHARS = 200;
 
 export function registerTagReadTools(
   server: McpServer,
@@ -46,20 +49,22 @@ export function registerTagReadTools(
     async () =>
       run(async () => {
         const [tagList, counts] = await Promise.all([
-          api.getJson('/tag/list') as Promise<{ tags?: RawTag[] }>,
+          api.getJson('/tag/list'),
           loadUnreadCountsOptional(api),
         ]);
-        const unread = unreadCountIndex(counts?.unreadcounts ?? []);
+        const unread = unreadCountIndex(counts?.unreadcounts);
 
         const categories: { name: string; unreadCount: number | undefined }[] =
           [];
         const labels: { name: string; unreadCount: number | undefined }[] = [];
-        for (const tag of tagList.tags ?? []) {
-          const name = labelFromStreamId(tag.id);
-          if (name === null) continue;
+        for (const raw of arrayOf(objectOf(tagList).tags)) {
+          const tag = objectOf(raw);
+          const id = stringOf(tag.id);
+          const name = labelFromStreamId(id);
+          if (id === undefined || name === null) continue;
           const entry = {
             name,
-            unreadCount: tag.unread_count ?? unread.get(tag.id ?? ''),
+            unreadCount: finiteNumberOf(tag.unread_count) ?? unread.get(id),
           };
           if (tag.type === 'tag') labels.push(entry);
           else categories.push(entry);
@@ -95,8 +100,9 @@ export function registerTagWriteTools(
       inputSchema: z.object({
         name: z
           .string()
+          .max(MAX_NAME_CHARS)
           .describe('Current name, exactly as in list_categories'),
-        new_name: z.string().describe('New name'),
+        new_name: z.string().max(MAX_NAME_CHARS).describe('New name'),
       }),
       annotations: {
         // Replaces a name somebody chose, on every feed or article carrying
@@ -144,7 +150,10 @@ export function registerTagWriteTools(
         'Two-step: the first call returns a confirmation token, the second call with that ' +
         'token performs the deletion.',
       inputSchema: z.object({
-        name: z.string().describe('Name, exactly as in list_categories'),
+        name: z
+          .string()
+          .max(MAX_NAME_CHARS)
+          .describe('Name, exactly as in list_categories'),
         confirm_token: z
           .string()
           .optional()
@@ -196,7 +205,7 @@ export function registerTagWriteTools(
 
         const form = new URLSearchParams({ s: `user/-/label/${target}` });
         expectOk(await api.postForm('/disable-tag', form), 'the deletion');
-        return ownWordsResult({ deleted: true, name });
+        return ownWordsResult({ deleted: true, name: target });
       })
   );
 }

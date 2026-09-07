@@ -110,6 +110,24 @@ What remains is the shape both records share: they live in the process. A stdio
 server is spawned per session, so that is the flow's lifetime — but a restart
 between the two halves of a dialog forgets what was spent, and a state minted before
 it opens as if unseen, until it expires. The operation itself is the last line, and
-for the four guarded tools it is an acceptable one: an import or an unsubscribe run
-twice is the same end state, and a second mark-as-read reaches only what arrived in
-between.
+for the five guarded operations it is an acceptable one: an import, an unsubscribe
+or a category deletion run twice is the same end state, and a second mark-as-read
+reaches only what arrived in between.
+
+## What the instance sends
+
+The instance is the operator's, but what answers under `FRESHRSS_URL` is whatever
+sits there — a proxy's block page, a typo that lands on somebody else's server, or
+anything at all under `FRESHRSS_INSECURE_TLS`. Its JSON is therefore read at a
+boundary rather than trusted to have the documented shape: a field of the wrong
+type is omitted, an element of the wrong shape is skipped, numbers must be finite
+(and safe integers where the output schema says so), display strings are cut, and
+the tokens it hands out must look like tokens before they go back out in a header.
+None of that is a guarantee about what the instance _does_; it is what keeps one
+odd value from taking a whole listing down, and the instance's text from reaching
+the model unbounded or unlabelled.
+
+A login the instance refuses is not retried for ten seconds. Every refused
+`ClientLogin` is a line in the FreshRSS log, and a model that reads "check the
+password" retries the cheapest tool — the cooldown is what keeps a wrong password
+from becoming a burst that a rate limit or a fail2ban jail acts on.

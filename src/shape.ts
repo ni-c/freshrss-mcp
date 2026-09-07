@@ -1,3 +1,10 @@
+import {
+  arrayOf,
+  finiteNumberOf,
+  objectOf,
+  stringOf,
+  unixSecondsOf,
+} from './boundary.js';
 import { redactUrlCredentials } from './redact.js';
 
 /**
@@ -74,50 +81,91 @@ export interface RawUnreadCount {
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
 
-/** A publisher-written string, fit for a model: control characters removed. */
-export function cleanText(value: string | undefined): string | undefined {
-  return value === undefined
+/**
+ * Characters a display-only string from the instance may carry. A title, an
+ * author or a feed name past this is not a title: the result budget would
+ * refuse the whole listing over one such field, so the field is cut instead.
+ */
+export const MAX_DISPLAY_CHARS = 2000;
+
+/** Characters a URL from the instance may carry before it is cut. */
+export const MAX_URL_CHARS = 8192;
+
+/**
+ * A publisher-written string, fit for a model: control characters removed,
+ * lone surrogates replaced, and cut at `max` where the caller gives one.
+ *
+ * Takes `unknown` because the instance's JSON decides the type, not this
+ * server: a number where a title belongs used to throw `value.replace is not
+ * a function` out of the whole listing. Anything that is not a string is
+ * treated as absent.
+ *
+ * `toWellFormed` is what turns `\ud800` — legal in JSON, produced by
+ * `String.fromCodePoint(0xd800)`, refused by every UTF-8 encoder on the client
+ * side — into U+FFFD.
+ */
+export function cleanText(value: unknown, max?: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const clean = value.replace(CONTROL_CHARACTERS, '');
+  const cut =
+    max !== undefined && clean.length > max ? `${clean.slice(0, max)}…` : clean;
+  return cut.toWellFormed();
+}
+
+/** A URL the instance wrote: a string, redacted, and cut past {@link MAX_URL_CHARS}. */
+function optionalUrl(value: unknown): string | undefined {
+  const text = cleanText(value, MAX_URL_CHARS);
+  return text === undefined || text === ''
     ? undefined
-    : value.replace(CONTROL_CHARACTERS, '');
+    : redactUrlCredentials(text);
 }
 
-function optionalUrl(value: string | undefined): string | undefined {
-  return value === undefined ? undefined : redactUrlCredentials(value);
-}
+/**
+ * Digits a FreshRSS feed id can have. Row ids are 64-bit at most and, in
+ * practice, small; fifteen digits keep the value a safe integer by
+ * construction, which is what the output schema's `.int()` accepts.
+ */
+const FEED_ID = /^[0-9]{1,15}$/;
 
-/** Numeric feed id out of a `feed/<id>` stream id. */
-export function feedIdFromStreamId(
-  streamId: string | undefined
-): number | null {
-  if (streamId === undefined || !streamId.startsWith('feed/')) return null;
-  const id = Number(streamId.slice('feed/'.length));
-  return Number.isInteger(id) ? id : null;
+/**
+ * Numeric feed id out of a `feed/<id>` stream id, or `null`.
+ *
+ * Bounded by digits rather than parsed with `Number` and tested with
+ * `isInteger`: `feed/1e300` and a twenty-digit id both pass that test, and
+ * the SDK then refuses the listing they appear in as a schema violation.
+ */
+export function feedIdFromStreamId(streamId: unknown): number | null {
+  if (typeof streamId !== 'string' || !streamId.startsWith('feed/')) {
+    return null;
+  }
+  const digits = streamId.slice('feed/'.length);
+  return FEED_ID.test(digits) ? Number(digits) : null;
 }
 
 /** Category or label name out of a `user/-/label/<name>` stream id. */
-export function labelFromStreamId(id: string | undefined): string | null {
-  if (id === undefined || !id.startsWith(LABEL_PREFIX)) return null;
+export function labelFromStreamId(id: unknown): string | null {
+  if (typeof id !== 'string' || !id.startsWith(LABEL_PREFIX)) return null;
   return id.slice(LABEL_PREFIX.length);
 }
 
 export function shapeSubscription(
-  feed: RawSubscription,
+  raw: unknown,
   unreadByStreamId: Map<string, number>
 ): Record<string, unknown> {
-  const category = feed.categories?.[0];
+  const feed = objectOf(raw);
+  const category = objectOf(arrayOf(feed.categories)[0]);
+  const id = stringOf(feed.id);
   return {
-    feedId: feedIdFromStreamId(feed.id),
-    title: cleanText(feed.title),
-    category: category?.label ?? labelFromStreamId(category?.id) ?? undefined,
-    feedUrl:
-      feed.url === undefined ? undefined : redactUrlCredentials(feed.url),
-    siteUrl:
-      feed.htmlUrl === undefined || feed.htmlUrl === ''
-        ? undefined
-        : redactUrlCredentials(feed.htmlUrl),
-    priority: feed['frss:priority'],
-    unreadCount:
-      feed.id !== undefined ? unreadByStreamId.get(feed.id) : undefined,
+    feedId: feedIdFromStreamId(id),
+    title: cleanText(feed.title, MAX_DISPLAY_CHARS),
+    category:
+      cleanText(category.label, MAX_DISPLAY_CHARS) ??
+      labelFromStreamId(category.id) ??
+      undefined,
+    feedUrl: optionalUrl(feed.url),
+    siteUrl: optionalUrl(feed.htmlUrl),
+    priority: cleanText(feed['frss:priority'], 40),
+    unreadCount: id === undefined ? undefined : unreadByStreamId.get(id),
   };
 }
 
@@ -127,15 +175,17 @@ export function shapeSubscription(
  * Note that FreshRSS reports categories and labels under the same
  * `user/-/label/<name>` key, so a category and a label of the same name would
  * collide here — as they do in the API itself.
+ *
+ * Only finite counts are kept: `1e999` in the instance's JSON is `Infinity`
+ * after parsing, and the output schema's `z.number()` refuses it.
  */
-export function unreadCountIndex(
-  counts: RawUnreadCount[]
-): Map<string, number> {
+export function unreadCountIndex(counts: unknown): Map<string, number> {
   const index = new Map<string, number>();
-  for (const entry of counts) {
-    if (entry.id !== undefined && typeof entry.count === 'number') {
-      index.set(entry.id, entry.count);
-    }
+  for (const raw of arrayOf(counts)) {
+    const entry = objectOf(raw);
+    const id = stringOf(entry.id);
+    const count = finiteNumberOf(entry.count);
+    if (id !== undefined && count !== undefined) index.set(id, count);
   }
   return index;
 }
@@ -161,13 +211,18 @@ export interface ShapedEntry extends Record<string, unknown> {
  * which is enough to decide whether the full text is worth fetching.
  */
 export function shapeEntry(
-  entry: RawEntry,
+  raw: unknown,
   toDecimalId: (id: string) => string,
   options: EntryOptions,
   budget: { left: number },
   notes: Notes
 ): ShapedEntry {
-  const categories = entry.categories ?? [];
+  const entry = objectOf(raw);
+  // Only the strings: a category is a stream id FreshRSS wrote, and anything
+  // else in that list is not one.
+  const categories = arrayOf(entry.categories).filter(
+    (c): c is string => typeof c === 'string'
+  );
   const labels = categories
     .filter((c) => c.startsWith(LABEL_PREFIX))
     .map((c) => c.slice(LABEL_PREFIX.length));
@@ -178,22 +233,32 @@ export function shapeEntry(
   // title-only RSS item is the common case — must carry the marker just the same.
   notes.add(UNTRUSTED_CONTENT_NOTE);
 
-  const html = entry.summary?.content ?? entry.content?.content ?? '';
+  const origin = objectOf(entry.origin);
+  const id = stringOf(entry.id);
+  const html =
+    stringOf(objectOf(entry.summary).content) ??
+    stringOf(objectOf(entry.content).content) ??
+    '';
+  // Bounded before it is turned into a date: `toISOString` throws a
+  // `RangeError` past ±8.64e12 seconds, and it would throw for the listing.
+  const published = unixSecondsOf(entry.published);
   const shaped: ShapedEntry = {
-    id: entry.id === undefined ? '' : toDecimalId(entry.id),
-    title: cleanText(entry.title),
-    author: cleanText(entry.author),
+    id: id === undefined ? '' : toDecimalId(id),
+    title: cleanText(entry.title, MAX_DISPLAY_CHARS),
+    author: cleanText(entry.author, MAX_DISPLAY_CHARS),
     published:
-      typeof entry.published === 'number'
-        ? new Date(entry.published * 1000).toISOString()
-        : undefined,
+      published === undefined
+        ? undefined
+        : new Date(published * 1000).toISOString(),
     // Redacted like a feed URL: an article link is whatever the publisher put
     // in the feed, and a publisher who serves a paid feed with the credentials
     // in its URLs tends to write the item links the same way.
-    url: optionalUrl(entry.canonical?.[0]?.href ?? entry.alternate?.[0]?.href),
+    url:
+      optionalUrl(objectOf(arrayOf(entry.canonical)[0]).href) ??
+      optionalUrl(objectOf(arrayOf(entry.alternate)[0]).href),
     feed: {
-      id: feedIdFromStreamId(entry.origin?.streamId),
-      title: cleanText(entry.origin?.title),
+      id: feedIdFromStreamId(origin.streamId),
+      title: cleanText(origin.title, MAX_DISPLAY_CHARS),
     },
     read: states.has('user/-/state/com.google/read'),
     starred: states.has('user/-/state/com.google/starred'),
@@ -205,9 +270,13 @@ export function shapeEntry(
     labels: labels.length > 0 ? labels : undefined,
   };
 
-  const enclosures = (entry.enclosure ?? [])
-    .filter((e) => e.href !== undefined)
-    .map((e) => ({ url: optionalUrl(e.href), type: e.type }));
+  const enclosures = arrayOf(entry.enclosure)
+    .map((e) => objectOf(e))
+    .filter((e) => typeof e.href === 'string')
+    .map((e) => ({
+      url: optionalUrl(e.href),
+      type: cleanText(e.type, 200),
+    }));
   if (enclosures.length > 0) shaped.enclosures = enclosures;
 
   if (html === '') return shaped;
@@ -473,12 +542,15 @@ export function htmlToText(
   const text = stripped
     // Raw control characters present in the source markup, not just the numeric
     // entities handled in decodeEntity: an ESC in an article body reaches the
-    // model \u2014 and any terminal rendering it \u2014 verbatim otherwise. Tab and
+    // model — and any terminal rendering it — verbatim otherwise. Tab and
     // newline survive, they are real formatting.
     .replace(CONTROL_CHARACTERS, '')
     .replace(/[ \t\u00a0]+/g, ' ')
     .replace(/\n\s*\n\s*\n+/g, '\n\n')
-    .trim();
+    .trim()
+    // A lone surrogate — a `\ud800` escape in the JSON, or the half of a pair
+    // the slice below may cut — is not a character any UTF-8 encoder accepts.
+    .toWellFormed();
 
   if (text.length <= limit) {
     // Only genuinely complete when the slice covered the whole input.
@@ -489,27 +561,35 @@ export function htmlToText(
     };
   }
   return {
-    text: `${text.slice(0, limit)}…`,
+    // Cut on a code unit, so `toWellFormed` runs once more: a pair split by
+    // the cut is a lone surrogate again.
+    text: `${text.slice(0, limit).toWellFormed()}…`,
     truncated: true,
     scanned: slice.length,
   };
 }
 
-const NAMED_ENTITIES: Record<string, string> = {
-  amp: '&',
-  lt: '<',
-  gt: '>',
-  quot: '"',
-  apos: "'",
-  nbsp: ' ',
-  hellip: '…',
-  mdash: '—',
-  ndash: '–',
-  laquo: '«',
-  raquo: '»',
-  euro: '€',
-  copy: '©',
-};
+/**
+ * A `Map`, not an object literal: the key is whatever the publisher wrote
+ * between `&` and `;`, and on an object literal `&constructor;` looked up
+ * `Object.prototype.constructor` — a function, which the replace callback then
+ * stringified into the article as `function Object() { [native code] }`.
+ */
+const NAMED_ENTITIES = new Map<string, string>([
+  ['amp', '&'],
+  ['lt', '<'],
+  ['gt', '>'],
+  ['quot', '"'],
+  ['apos', "'"],
+  ['nbsp', ' '],
+  ['hellip', '…'],
+  ['mdash', '—'],
+  ['ndash', '–'],
+  ['laquo', '«'],
+  ['raquo', '»'],
+  ['euro', '€'],
+  ['copy', '©'],
+]);
 
 function decodeEntity(match: string, entity: string): string {
   if (entity.startsWith('#')) {
@@ -518,7 +598,10 @@ function decodeEntity(match: string, entity: string): string {
       : Number.parseInt(entity.slice(1), 10);
     // Control characters would end up verbatim in the model context.
     if (Number.isNaN(code) || code < 32 || code > 0x10ffff) return ' ';
+    // A surrogate is not a character: `String.fromCodePoint(0xd800)` does not
+    // throw, it hands back half of a pair, and that half survives JSON.
+    if (code >= 0xd800 && code <= 0xdfff) return '�';
     return String.fromCodePoint(code);
   }
-  return NAMED_ENTITIES[entity.toLowerCase()] ?? match;
+  return NAMED_ENTITIES.get(entity.toLowerCase()) ?? match;
 }
