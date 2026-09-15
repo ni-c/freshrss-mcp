@@ -17,6 +17,12 @@ services:
     environment:
       TZ: Etc/UTC
       CRON_MIN: ''
+      # FreshRSS 1.30 refuses to fetch from private networks unless the host is
+      # on this list, and `feed` below is exactly such a host. Without it the
+      # weekly :latest run fails at the first subscribe and every test after it
+      # fails too, for want of a feed. 1.29.1 does not know the variable and
+      # ignores it.
+      INTERNAL_HOST_ALLOWLIST: 'feed:80'
       # FreshRSS's own installer variables. Without them the first request is
       # a five-step browser wizard, and there is no API to skip it.
       # `--api_enabled` is what the GReader endpoint hangs off. Without it
