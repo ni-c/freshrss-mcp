@@ -4,5 +4,5 @@
     "MCP server for FreshRSS — read your feeds, search articles,",
     "and keep subscriptions and tags in order."
   ],
-  "badges": ["16 tools", "MIT", "Node ≥22"]
+  "badges": ["16 tools", "MIT"]
 }

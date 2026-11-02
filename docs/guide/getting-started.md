@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Node.js 22 or newer (24 recommended — it is the active LTS line)
+- Node.js 24 or newer (26 recommended — it is the active LTS line)
 - A FreshRSS instance, developed and verified against 1.29
 
 ## 1. Enable the API in FreshRSS

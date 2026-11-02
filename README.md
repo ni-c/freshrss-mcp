@@ -61,7 +61,7 @@ tools ask a person first, through MCP elicitation.
 
 ## Requirements
 
-- Node.js 22 or newer
+- Node.js 24 or newer
 - A FreshRSS instance (developed against 1.29) with
   - the API enabled: **Settings → Authentication → "Allow API access"**
   - an **API password** set for the user: **Settings → Profile → API management**.
