@@ -69,7 +69,7 @@ FRESHRSS_URL=http://127.0.0.1:8081 FRESHRSS_USER=integration \
 ## Expectations
 
 - **Tests.** Behaviour changes come with a test that fails without the change.
-  CI runs lint, build and the test suite on Node 22 and 24, plus `npm audit`, CodeQL and a
+  CI runs lint, build and the test suite on Node 24 and 26, plus `npm audit`, CodeQL and a
   Trivy scan of the container image on amd64 and arm64.
 - **Comments** explain constraints the code cannot show — not what the next line does.
 - **Security-sensitive areas** (config parsing, confirmation tokens, anything that
